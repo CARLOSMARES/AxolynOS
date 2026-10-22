@@ -1,0 +1,50 @@
+/*
+ * Prueba: cadenas (concatenacion, longitud, comparacion y caracteres).
+ */
+import core;
+
+fn repetir(s: string, n: int): string {
+    var r: string = "";
+    var i: int = 0;
+    while (i < n) {
+        r = r + s;
+        i = i + 1;
+    }
+    return r;
+}
+
+fn main() {
+    var saludo: string = "Hola";
+    var mundo: string = "mundo";
+
+    core.println(saludo + ", " + mundo + "!");
+
+    core.print("longitud = ");
+    core.print_int(core.strlen(saludo));
+    core.println("");
+
+    core.println(repetir("ab", 3));
+
+    if (saludo == "Hola") {
+        core.println("igual");
+    } else {
+        core.println("distinto");
+    }
+
+    if (saludo != mundo) {
+        core.println("distintos");
+    }
+
+    if (saludo < mundo) {
+        core.println("saludo < mundo");
+    }
+
+    core.print("int_to_str = ");
+    core.println(core.int_to_str(1234));
+
+    var c: int = 0;
+    c = saludo[0];
+    core.print("primer caracter = ");
+    core.print_int(c);
+    core.println("");
+}

@@ -1,0 +1,6 @@
+/* Error: el programa no define la funcion 'main'. */
+import core;
+
+fn saludar() {
+    core.println("hola");
+}

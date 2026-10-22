@@ -1,0 +1,7 @@
+/* Error: falta el punto y coma al final de la sentencia. */
+import core;
+
+fn main() {
+    var x: int = 1
+    core.print_int(x);
+}

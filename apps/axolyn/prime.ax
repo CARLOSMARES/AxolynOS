@@ -1,0 +1,33 @@
+import core;
+
+fn is_prime(n: int): int {
+    if (n <= 1) {
+        return 0;
+    }
+    if (n <= 3) {
+        return 1;
+    }
+    if (n % 2 == 0 || n % 3 == 0) {
+        return 0;
+    }
+    var i: int = 5;
+    while (i * i <= n) {
+        if (n % i == 0 || n % (i + 2) == 0) {
+            return 0;
+        }
+        i = i + 6;
+    }
+    return 1;
+}
+
+fn main() {
+    core.println("Numeros primos hasta 50:");
+    var i: int = 2;
+    while (i <= 50) {
+        if (is_prime(i) == 1) {
+            core.print_int(i);
+            core.println("");
+        }
+        i = i + 1;
+    }
+}

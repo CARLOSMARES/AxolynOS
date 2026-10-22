@@ -1,0 +1,39 @@
+/*
+ * Prueba: recursion (Fibonacci) y llamadas entre funciones.
+ */
+import core;
+
+fn fib(n: int): int {
+    if (n < 2) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+fn factorial(n: int): int {
+    var r: int = 1;
+    var i: int = 2;
+    while (i <= n) {
+        r = r * i;
+        i = i + 1;
+    }
+    return r;
+}
+
+fn main() {
+    var i: int = 0;
+    while (i < 15) {
+        core.print_int(fib(i));
+        core.print(" ");
+        i = i + 1;
+    }
+    core.println("");
+
+    i = 1;
+    while (i <= 10) {
+        core.print_int(factorial(i));
+        core.print(" ");
+        i = i + 1;
+    }
+    core.println("");
+}

@@ -1,0 +1,6 @@
+/* Error: 'break' fuera de un bucle. */
+import core;
+
+fn main() {
+    break;
+}

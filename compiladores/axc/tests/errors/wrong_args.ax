@@ -1,0 +1,10 @@
+/* Error: numero incorrecto de argumentos en una llamada. */
+import core;
+
+fn sumar(a: int, b: int): int {
+    return a + b;
+}
+
+fn main() {
+    core.print_int(sumar(1));
+}

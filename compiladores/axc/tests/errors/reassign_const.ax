@@ -1,0 +1,8 @@
+/* Error: no se puede reasignar una constante ('let'). */
+import core;
+
+fn main() {
+    let x: int = 1;
+    x = 2;
+    core.print_int(x);
+}

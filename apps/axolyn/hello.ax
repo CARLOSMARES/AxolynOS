@@ -1,0 +1,5 @@
+import core;
+
+fn main() {
+    core.println("Hola desde AxolynOS (Axolyn bytecode)");
+}

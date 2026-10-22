@@ -1,0 +1,10 @@
+/* Error: una funcion 'void' no puede devolver un valor. */
+import core;
+
+fn saludar() {
+    return 42;
+}
+
+fn main() {
+    saludar();
+}

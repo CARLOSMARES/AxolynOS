@@ -1,0 +1,21 @@
+import core;
+
+fn fibonacci(n: int): int {
+    if (n <= 1) {
+        return n;
+    }
+    return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+fn main() {
+    core.println("Numeros de Fibonacci (0..15):");
+    var i: int = 0;
+    while (i <= 15) {
+        core.print("fib(");
+        core.print_int(i);
+        core.print(") = ");
+        core.print_int(fibonacci(i));
+        core.println("");
+        i = i + 1;
+    }
+}

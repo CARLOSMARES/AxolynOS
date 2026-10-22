@@ -1,0 +1,7 @@
+/* Error: tipos incompatibles en una asignacion. */
+import core;
+
+fn main() {
+    var x: int = "esto no es un entero";
+    core.print_int(x);
+}

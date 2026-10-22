@@ -1,0 +1,61 @@
+# AxolynOS
+
+Sistema operativo x86-64 experimental escrito **desde cero** en ensamblador
+(NASM + GAS) y **C++**, con microkernel, modulos cargables en caliente,
+un **compilador propio** (lenguaje *Axolyn* -> bytecode) con su maquina
+virtual ejecutada dentro del kernel, una biblioteca de APIs de usuario y
+aplicaciones base.
+
+```
+AxolynOS/
+├── Kernel/          microkernel: arranque, CPU, memoria, planificador,
+│                    syscalls, IPC, cargador ELF, modulos y la VM
+│   ├── include/     cabeceros del kernel (contratos internos)
+│   ├── src/         implementacion en C++ y ensamblador
+│   ├── vm/          maquina virtual de bytecode (AXB) compartida
+│   ├── modules/     modulos del kernel (.axmod)
+│   ├── bootloader/  stage1 + stage2 en NASM
+│   └── linker/      scripts de enlazado (kernel, modulos)
+├── apis/            libaxos: API de usuario (syscalls, procesos, ficheros)
+├── apps/            aplicaciones base nativas (C++) y Axolyn (bytecode)
+├── compiladores/    axc: compilador del lenguaje Axolyn + runner de pruebas
+├── manuales/        documentacion del sistema y guias de uso
+└── scripts/         instalacion, compilacion, ejecucion y pruebas
+```
+
+## Puesta en marcha rapida (Ubuntu en WSL2)
+
+```bash
+sudo bash scripts/install_ubuntu_wsl.sh   # dependencias (gcc, nasm, qemu...)
+bash scripts/build.sh                     # compila todo
+bash scripts/run.sh                       # arranca en QEMU
+bash scripts/test.sh                      # bateria de pruebas
+```
+
+Compilar en el disco de Windows (`/mnt/c`) es lento: para Developing
+rapido copia el proyecto al sistema de ficheros de Linux
+(`cp -r . ~/projects/AxolynOS`).
+
+## Documentacion
+
+| Manual | Contenido |
+|---|---|
+| [manuales/00-indice.md](manuales/00-indice.md) | Indice y mapa del proyecto |
+| [manuales/01-arquitectura.md](manuales/01-arquitectura.md) | Vista general del sistema y mapa de memoria |
+| [manuales/02-build-system.md](manuales/02-build-system.md) | Como se compila cada pieza |
+| [manuales/03-bootloader.md](manuales/03-bootloader.md) | El arranque: BIOS, modo protegido, modo largo |
+| [manuales/04-kernel-microkernel.md](manuales/04-kernel-microkernel.md) | Subsistemas del kernel |
+| [manuales/05-modulos.md](manuales/05-modulos.md) | **Como añadir un modulo al kernel** |
+| [manuales/06-syscalls.md](manuales/06-syscalls.md) | Tabla de llamadas al sistema |
+| [manuales/07-apis.md](manuales/07-apis.md) | La biblioteca de usuario |
+| [manuales/08-crear-aplicaciones.md](manuales/08-crear-aplicaciones.md) | **Como crear una aplicacion** (C++ y Axolyn) |
+| [manuales/09-lenguaje-axolyn.md](manuales/09-lenguaje-axolyn.md) | Referencia del lenguaje Axolyn |
+| [manuales/10-bytecode-vm.md](manuales/10-bytecode-vm.md) | Bytecode AXB y la maquina virtual |
+| [manuales/11-compilador.md](manuales/11-compilador.md) | El compilador `axc` por dentro |
+| [manuales/12-depuracion.md](manuales/12-depuracion.md) | Depuracion con GDB/QEMU |
+
+## Estado
+
+Experimental. El kernel arranca en QEMU, carga modulos, expone syscalls a
+aplicaciones nativas en ring 3 y ejecuta programas del lenguaje Axolyn
+dentro de la VM del kernel.

@@ -1,0 +1,13 @@
+/*
+ * Prueba: el programa mas basico del lenguaje.
+ */
+import core;
+
+fn main() {
+    core.println("Hola, mundo!");
+    core.print("Bienvenido a ");
+    core.println("Axolyn.");
+    core.print("2 + 3 = ");
+    core.print_int(2 + 3);
+    core.println("");
+}

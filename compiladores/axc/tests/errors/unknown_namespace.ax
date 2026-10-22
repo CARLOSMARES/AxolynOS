@@ -1,0 +1,5 @@
+/* Error: namespace desconocido en un 'import'. */
+import inventado;
+
+fn main() {
+}

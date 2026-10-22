@@ -1,0 +1,7 @@
+/* Error: tipo de struct desconocido. */
+import core;
+
+fn main() {
+    var p: Desconocido;
+    core.println("no deberia compilar");
+}

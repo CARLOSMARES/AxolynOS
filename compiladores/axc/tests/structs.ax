@@ -1,0 +1,58 @@
+/*
+ * Prueba: structs, acceso a campos y paso de structs a funciones.
+ */
+import core;
+
+struct Punto {
+    x: int,
+    y: int,
+}
+
+struct Rectangulo {
+    ancho: int,
+    alto: int,
+}
+
+fn area(r: Rectangulo): int {
+    return r.ancho * r.alto;
+}
+
+fn mover(p: Punto, dx: int, dy: int): Punto {
+    var q: Punto;
+    q.x = p.x + dx;
+    q.y = p.y + dy;
+    return q;
+}
+
+fn main() {
+    var p: Punto;
+    p.x = 3;
+    p.y = 4;
+    core.print("p = (");
+    core.print_int(p.x);
+    core.print(", ");
+    core.print_int(p.y);
+    core.println(")");
+
+    var r: Rectangulo;
+    r.ancho = 6;
+    r.alto = 7;
+    core.print("area = ");
+    core.print_int(area(r));
+    core.println("");
+
+    var q: Punto = mover(p, 10, 20);
+    core.print("q = (");
+    core.print_int(q.x);
+    core.print(", ");
+    core.print_int(q.y);
+    core.println(")");
+
+    p.x += 5;
+    p.y -= 1;
+    core.print("p = (");
+    core.print_int(p.x);
+    core.print(", ");
+    core.print_int(p.y);
+    core.println(")");
+}

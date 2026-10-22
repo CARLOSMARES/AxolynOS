@@ -1,0 +1,6 @@
+/* Error: se usa un namespace sin haberlo importado. */
+import core;
+
+fn main() {
+    console.write("no deberia compilar\n");
+}

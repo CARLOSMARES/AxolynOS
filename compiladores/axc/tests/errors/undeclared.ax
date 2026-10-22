@@ -1,0 +1,6 @@
+/* Error: variable no declarada. */
+import core;
+
+fn main() {
+    core.print_int(noDeclarada);
+}

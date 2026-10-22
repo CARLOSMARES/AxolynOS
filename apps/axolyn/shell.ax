@@ -1,0 +1,26 @@
+import core;
+import console;
+
+fn main() {
+    console.write("AxolynOS shell (Axolyn VM)\n");
+    console.write("Escribe 'salir' para terminar.\n\n");
+
+    while (true) {
+        console.write("> ");
+        var line: string = console.read_line();
+        if (line == "salir") {
+            break;
+        }
+        if (line == "quit") {
+            break;
+        }
+        if (core.strlen(line) == 0) {
+            break;
+        }
+        console.write("eco: ");
+        console.write(line);
+        console.write("\n");
+    }
+
+    console.write("Hasta luego\n");
+}

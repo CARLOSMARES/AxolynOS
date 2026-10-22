@@ -1,0 +1,21 @@
+# Artefactos de compilacion
+build/
+*.o
+*.a
+*.elf
+*.axb
+*.axmod
+*.img
+*.bin
+*.map
+*.log
+
+# Editores
+.vscode/
+.idea/
+*.swp
+*~
+
+# Sistema
+.DS_Store
+Thumbs.db
