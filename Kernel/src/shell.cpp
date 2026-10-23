@@ -1,4 +1,4 @@
-﻿/*
+/*
  * AxolynOS - Shell del kernel.
  *
  * Un interprete de ordenes minimo que corre como hilo del kernel y lee

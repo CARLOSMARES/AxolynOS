@@ -1,4 +1,4 @@
-﻿# Bytecode AXB y la maquina virtual
+# Bytecode AXB y la maquina virtual
 
 El compilador `axc` no genera codigo nativo: genera **bytecode AXB** que
 ejecuta la maquina virtual que vive dentro del kernel

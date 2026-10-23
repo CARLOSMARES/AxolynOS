@@ -58,7 +58,12 @@ enum {
     AX_SYS_YIELD      = 25, /* cede el CPU al planificador               */
     AX_SYS_THREADS    = 26, /* rdi=AxThreadInfo* rsi=max -> n           */
     AX_SYS_VMSTATUS   = 27, /* rdi=AxVmInfo*                            */
-    AX_SYS_MAX        = 28
+    AX_SYS_POWEROFF   = 28, /* apaga el sistema/maquina                 */
+    AX_SYS_SUSPEND    = 29, /* suspende el sistema (ACPI S3)            */
+    AX_SYS_HALT       = 30, /* detiene el sistema                       */
+    AX_SYS_DISKREAD   = 31, /* rdi=lba rsi=buf rdx=count                */
+    AX_SYS_DISKWRITE  = 32, /* rdi=lba rsi=buf rdx=count                */
+    AX_SYS_MAX        = 33
 };
 
 /* Codigos de error (negativos) */

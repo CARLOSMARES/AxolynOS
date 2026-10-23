@@ -101,9 +101,11 @@ $SUDO apt-get update -qq
 
 install_pkgs() {
   local list="$1"
+  # `env` hace falta cuando SUDO esta vacio (ya somos root): si no, bash
+  # interpreta DEBIAN_FRONTEND=... como el nombre del comando.
   # shellcheck disable=SC2086
-  $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $list >/dev/null 2>&1 \
-    || $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y $list
+  $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $list >/dev/null 2>&1 \
+    || $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y $list
 }
 
 log "Instalando toolchain (gcc, nasm, make, binutils)..."
@@ -128,29 +130,40 @@ if [ "$IS_WSL" -eq 1 ]; then
 
   # /etc/wsl.conf: el volumen de metadatos acelera el I/O sobre /mnt/c y
   # systemd permite que los servicios de usuario funcionen.
-  # Se respeta el usuario por defecto que ya tuviera configurado.
-  DEFAULT_USER_LINE=""
-  if [ -f /etc/wsl.conf ] && grep -q '^default=' /etc/wsl.conf 2>/dev/null; then
-    DEFAULT_USER_LINE="$(grep '^default=' /etc/wsl.conf | head -1)"
+  #
+  # IMPORTANTE: no se sobrescribe el fichero. Se conserva todo lo que el
+  # usuario ya tuviera configurado y solo se anaden las claves que falten
+  # dentro de un bloque gestionado por este script.
+  WSL_CONF=/etc/wsl.conf
+  if [ -f "$WSL_CONF" ]; then
+    cp "$WSL_CONF" "$WSL_CONF.bak.$(date +%s)" 2>/dev/null || true
   fi
-  if [ -f /etc/wsl.conf ]; then
-    cp /etc/wsl.conf "/etc/wsl.conf.bak.$(date +%s)" 2>/dev/null || true
+
+  # Valores actuales (si existen) para no pisarlos.
+  cur_automount_enabled="$(grep -E '^\s*enabled\s*=' "$WSL_CONF" 2>/dev/null | head -1 | sed 's/.*=\s*//' || true)"
+  cur_automount_options="$(grep -E '^\s*options\s*=' "$WSL_CONF" 2>/dev/null | head -1 | sed 's/.*=\s*//' || true)"
+  cur_systemd="$(grep -E '^\s*systemd\s*=' "$WSL_CONF" 2>/dev/null | head -1 | sed 's/.*=\s*//' || true)"
+
+  # Solo se escriben las claves ausentes. `grep -q` evita duplicarlas si el
+  # script se ejecuta varias veces (idempotencia).
+  managed=""
+  if ! grep -q '^\[automount\]' "$WSL_CONF" 2>/dev/null; then
+    managed+=$'[automount]\n'
+    managed+="enabled=${cur_automount_enabled:-true}"$'\n'
+    managed+="options=\"${cur_automount_options:-metadata,umask=22,fmask=11}\""$'\n'
+    managed+='mountFsTab=true'$'\n'
   fi
-  {
-    echo '[automount]'
-    echo 'enabled=true'
-    echo 'options="metadata,umask=22,fmask=11"'
-    echo 'mountFsTab=true'
-    echo
-    echo '[boot]'
-    echo 'systemd=true'
-    if [ -n "$DEFAULT_USER_LINE" ]; then
-      echo
-      echo '[user]'
-      echo "$DEFAULT_USER_LINE"
-    fi
-  } | $SUDO tee /etc/wsl.conf >/dev/null
-  ok "/etc/wsl.conf actualizado (requiere 'wsl --shutdown' para aplicarse)"
+  if ! grep -q '^\[boot\]' "$WSL_CONF" 2>/dev/null; then
+    managed+=$'\n[boot]\n'
+    managed+="systemd=${cur_systemd:-true}"$'\n'
+  fi
+
+  if [ -n "$managed" ]; then
+    printf '%s' "$managed" | $SUDO tee -a "$WSL_CONF" >/dev/null
+    ok "/etc/wsl.conf ampliado (requiere 'wsl --shutdown' para aplicarse)"
+  else
+    ok "/etc/wsl.conf ya estaba configurado; no se modifica"
+  fi
 
   # Compilar sobre /mnt/c es lento: avisamos del proyecto en el disco de Linux
   LINUX_HOME="$HOME/projects/AxolynOS"

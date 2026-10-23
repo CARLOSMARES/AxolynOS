@@ -29,6 +29,8 @@
 #include "ax_module.h"
 #include "ax_ipc.h"
 #include "ax_sched.h"
+#include "ax_power.h"
+#include "ax_disk.h"
 
 /* ------------------------------------------------------------------ */
 /* Tabla de handlers                                                   */
@@ -335,19 +337,51 @@ static int sys_yield(uint64_t* args, uint64_t* ret)
     return 0;
 }
 
-static int sys_threads(uint64_t* args, uint64_t* ret)
+static int sys_shutdown(uint64_t* args, uint64_t* ret)
 {
-    uint64_t out  = args[0];
-    uint64_t max  = args[1];
+    (void)args;
+    (void)ret;
+    ax_power_shutdown();
+    return 0;
+}
 
-    if (!ax_user_ptr_ok(out, max * sizeof(AxThreadInfo))) {
-        return -AX_EINVAL;
-    }
-    int n = ax_proc_fill_info((AxThreadInfo*)(uintptr_t)out, (uint32_t)max);
-    if (n < 0) {
-        return n;
-    }
-    *ret = (uint64_t)n;
+static int sys_halt(uint64_t* args, uint64_t* ret)
+{
+    (void)args;
+    (void)ret;
+    ax_power_halt();
+    return 0;
+}
+
+static int sys_suspend(uint64_t* args, uint64_t* ret)
+{
+    (void)args;
+    (void)ret;
+    ax_power_suspend();
+    return 0;
+}
+
+static int sys_diskread(uint64_t* args, uint64_t* ret)
+{
+    uint64_t lba = args[0];
+    void* buf = (void*)(uintptr_t)args[1];
+    uint32_t cnt = (uint32_t)args[2];
+    if (!buf || cnt == 0) return -AX_EINVAL;
+    int r = ax_disk_read(0, lba, cnt, buf);
+    if (r < 0) return r;
+    *ret = (uint64_t)(cnt * 512);
+    return 0;
+}
+
+static int sys_diskwrite(uint64_t* args, uint64_t* ret)
+{
+    uint64_t lba = args[0];
+    const void* buf = (const void*)(uintptr_t)args[1];
+    uint32_t cnt = (uint32_t)args[2];
+    if (!buf || cnt == 0) return -AX_EINVAL;
+    int r = ax_disk_write(0, lba, cnt, buf);
+    if (r < 0) return r;
+    *ret = (uint64_t)(cnt * 512);
     return 0;
 }
 
@@ -617,8 +651,13 @@ void ax_syscall_init(void)
     ax_syscall_register(AX_SYS_SYSINFO,   sys_sysinfo);
     ax_syscall_register(AX_SYS_KILL,      sys_kill);
     ax_syscall_register(AX_SYS_YIELD,     sys_yield);
-    ax_syscall_register(AX_SYS_THREADS,   sys_threads);
+    ax_syscall_register(AX_SYS_REBOOT,    sys_reboot);
     ax_syscall_register(AX_SYS_VMSTATUS,  sys_vmstatus);
+    ax_syscall_register(AX_SYS_POWEROFF,  sys_shutdown);
+    ax_syscall_register(AX_SYS_SUSPEND,   sys_suspend);
+    ax_syscall_register(AX_SYS_HALT,      sys_halt);
+    ax_syscall_register(AX_SYS_DISKREAD,  sys_diskread);
+    ax_syscall_register(AX_SYS_DISKWRITE, sys_diskwrite);
 }
 
 /* ------------------------------------------------------------------ */

@@ -461,8 +461,12 @@ void ax_sched_init(void)
      * arranque se retira del planificador.
      */
     {
-        uint64_t* slot = (uint64_t*)(uintptr_t)__kernel_stack_top;
-        slot[-1] = (uint64_t)(uintptr_t)&ax_boot_park_trampoline;
+        /* __kernel_stack_top es la parte alta de la pila inicial (creciente
+         * hacia abajo). El marco de llamada guardado por la convención está
+         * por debajo del tope; usamos un offset positivo que caiga dentro de
+         * la pila del .bss para parchear la dirección de retorno. */
+        uint64_t* slot = (uint64_t*)(uintptr_t)&__kernel_stack_top - 16;
+        slot[0] = (uint64_t)(uintptr_t)&ax_boot_park_trampoline;
     }
 
     /*

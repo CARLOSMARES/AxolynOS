@@ -46,9 +46,37 @@
 ax_boot_cr3:
     .quad 0
 
+/* El codigo vuelve a .text.boot: si no, todo lo que sigue a la etiqueta
+   _start se ensambla dentro de .data (seccion de escritura) y el punto de
+   entrada termina en el segmento de datos. */
+.section .text.boot, "ax"
+
 _start:
     cli                         /* Sin interrupciones hasta que el kernel este listo */
     cld                         /* DF=0: las cadenas se recorren hacia adelante   */
+
+    /* RDI trae la direccion fisica del AxBootInfo.  Hay que salvarla ANTES
+       de usar RDI para poner a cero el .bss (rep stosb lo deja apuntando al
+       final), o el kernel acabaria copiando basura.  Se usa R12, que no se
+       toca en todo el arranque. */
+    movq %rdi, %r12
+
+    /* --------------------------------------------------------------- */
+    /* 0. Habilitar SSE/SSE2                                           */
+    /* --------------------------------------------------------------- */
+    /* GCC en x86-64 genera instrucciones SSE de forma rutinaria (por
+       ejemplo movd/pshufd para rellenar buffers en ax_console_clear).
+       Aunque el hardware las soporta siempre en long mode, la CPU las
+       prohibe (#UD) mientras CR4.OSFXSR/OSXMMEXCPT esten a 0.  Tambien
+       hay que dejar CR0.EM=0 y CR0.TS=0 para que no se interprete como
+       una FPU emulada.  Se hace antes de ejecutar cualquier codigo C. */
+    movq %cr0, %rax
+    andq $-13, %rax             /* limpia EM (bit 2) y TS (bit 3) */
+    orq  $0x02, %rax            /* MP (bit 1) = 1                 */
+    movq %rax, %cr0
+    movq %cr4, %rax
+    orq  $0x600, %rax           /* OSFXSR (9) | OSXMMEXCPT (10)   */
+    movq %rax, %cr4
 
     /* --------------------------------------------------------------- */
     /* 1. Poner a cero el BSS                                          */
@@ -69,8 +97,16 @@ _start:
     movq %cr3, %rax
     movq %rax, ax_boot_cr3(%rip)
 
-    /* RAX = base de las tablas temporales (virtual, dentro del .bss). */
+    /* RAX = base de las tablas temporales. Las entradas de tabla de pagina
+       y el propio CR3 deben contener direcciones FISICAS, no virtuales: la
+       MMU no aplica la traduccion al recorrer las tablas. El kernel esta
+       enlazado en 0xFFFFFFFF80200000 y cargado en 0x200000, asi que
+       restando 0xFFFFFFFF80000000 se obtiene la fisica. La identidad baja
+       del bootloader sigue activa, de modo que escribir en esa direccion
+       fisica es valido hasta que se carga el nuevo CR3. */
     leaq __tmp_ptables(%rip), %rbx
+    movabsq $0xFFFFFFFF80000000, %r11
+    subq %r11, %rbx
 
     /* Estructura de las tablas (todas a 4 KiB):
          base + 0x0000 : PML4
@@ -151,9 +187,9 @@ _start:
     /* --------------------------------------------------------------- */
     /* 3. Copiar el AxBootInfo                                         */
     /* --------------------------------------------------------------- */
-    /* RDI es la direccion fisica que entrega el bootloader. Se conserva
-       desde la entrada en %rbx (registro preservado entre llamadas). */
-    movq %rdi, %rsi
+    /* RDI es la direccion fisica que entrega el bootloader. Se conservo en
+       %r12 al entrar en _start (el bucle del .bss destruye RDI). */
+    movq %r12, %rsi
     testq %rsi, %rsi
     jnz  2f
     movq $0x1000, %rsi             /* valor por defecto del contrato */

@@ -373,24 +373,25 @@ read_e820:
         mov     dword [mem_size], 0
         mov     dword [mem_size_hi], 0
         mov     dword [e820_ptr], E820_BUF
-        xor     ebx, ebx                ; continuacion (32 bits bajos)
-        xor     edx, edx                ; continuacion (32 bits altos)
+        xor     ebx, ebx                ; continuacion (la devuelve el BIOS)
 .loop:
         mov     eax, 0xE820
+        mov     edx, 0x534D4150         ; 'SMAP': firma obligatoria en EDX
         mov     ecx, E820_STRIDE        ; tamano de la entrada (24 bytes)
         mov     edi, [e820_ptr]         ; destino de la entrada
         int     0x15
         ; --- diagnostico: resultado de la llamada y contenido de la entrada --
+        mov     [e820_ax], ax            ; guardar AX ANTES de tocar AL
         setc    al
-        mov     [e820_cf], al
-        mov     [e820_ax], ax
+        movzx   eax, al
+        mov     [e820_cf], eax
         mov     si, msg_eax
         call    serial_puts
         mov     ax, [e820_ax]
         call    serial_puthex32
         mov     si, msg_cf
         call    serial_puts
-        mov     al, [e820_cf]
+        movzx   eax, byte [e820_cf]
         call    serial_puthex32
         mov     si, msg_nl
         call    serial_puts
@@ -411,10 +412,14 @@ read_e820:
         call    serial_puts
         cmp     byte [e820_cf], 0
         jne     .fin                    ; CF = 1 -> fin del mapa
-        ; longitud invalida -> fin del mapa
+        ; En exito el BIOS devuelve EAX = 'SMAP' (0x534D4150). Si no,
+        ; la entrada no es valida y hay que terminar.
+        cmp     word [e820_ax], 0x4150
+        jne     .fin
+        ; longitud invalida -> fin del mapa (solo si es exactamente 0)
         mov     eax, [edi+8]
-        cmp     eax, 0x1000
-        jb      .fin
+        or      eax, [edi+12]
+        jz      .fin
         ; sumar la memoria utilizable
         mov     eax, [edi+16]           ; type
         cmp     eax, 1
@@ -429,8 +434,6 @@ read_e820:
         add     dword [e820_ptr], E820_STRIDE
         ; la continuacion 0 significa que no hay mas entradas
         test    ebx, ebx
-        jnz     .loop
-        test    edx, edx
         jnz     .loop
         jmp     .fin
 .fin:
@@ -778,6 +781,9 @@ protected_entry:
         xor     eax, eax
         rep     stosd                   ; se pone a cero toda la zona
 
+        mov     esi, msg_z
+        call    serial_puts32
+
         ; --- PML4 ----------------------------------------------------------
         mov     dword [PML4_ADDR+0*8], PDPT_LOW  | PTE_P | PTE_RW
         mov     dword [PML4_ADDR+511*8], PDPT_HIGH | PTE_P | PTE_RW
@@ -793,8 +799,8 @@ protected_entry:
         mov     eax, 0                  ; base fisica de la PD actual
         mov     ebp, 4                  ; numero de PDs
 .ploop:
-        xor     ebx, 0
-        xor     edx, 0
+        xor     ebx, ebx
+        xor     edx, edx
 .pinner:
         mov     ecx, ebx
         shl     ecx, 21                 ; j * 2 MiB
@@ -809,6 +815,9 @@ protected_entry:
         add     eax, 0x40000000         ; siguiente PD -> siguiente GiB
         dec     ebp
         jnz     .ploop
+
+        mov     esi, msg_pdl
+        call    serial_puts32
 
         ; --- PDPT_high[510] -> PD_high ------------------------------------
         ;     El indice 510 es el correcto para 0xFFFFFFFF80200000
@@ -831,6 +840,9 @@ protected_entry:
         dec     ebp
         jnz     .philoop
 
+        mov     esi, msg_pdh
+        call    serial_puts32
+
         ; --- PT del kernel: 512 paginas de 4 KiB --------------------------
         mov     edi, PT_KERNEL
         xor     eax, eax
@@ -841,9 +853,13 @@ protected_entry:
         add     ecx, 0x200000           ; + base fisica del kernel
         or      ecx, PTE_P | PTE_RW
         mov     [edi+edx*8], ecx
+        inc     eax                     ; siguiente pagina fisica (¡imprescindible!)
         inc     edx
         cmp     edx, 512
         jne     .ptloop
+
+        mov     esi, msg_pt
+        call    serial_puts32
 
         ; ------------------------------------------------------------------
         ; Estructura AxBootInfo (72 bytes) en bootinfo_phys (0x1000)
@@ -880,6 +896,9 @@ protected_entry:
         mov     [BOOTINFO_PTR], eax
         mov     dword [BOOTINFO_PTR+4], 0
 
+        mov     esi, msg_bi
+        call    serial_puts32
+
         ; ------------------------------------------------------------------
         ; Comprobacion de soporte de modo largo (CPUID)
         ; ------------------------------------------------------------------
@@ -911,6 +930,9 @@ protected_entry:
         mov     eax, cr0
         or      eax, 1 << 31
         mov     cr0, eax
+
+        mov     esi, msg_pg
+        call    serial_puts32
 
         ; --- GDT de 64 bits y salto a modo largo ---------------------------
         lgdt    [gdt64_ptr]
@@ -956,14 +978,56 @@ long_entry:
         mov     rsp, 0x90000            ; pila provisional del kernel
         xor     rbp, rbp
         xor     rbx, rbx
+
+        ; Diagnostico: ya estamos en modo largo.
+        lea     rsi, [msg_lm]
+        call    serial_puts64
+
         ; Argumentos de arranque: RDI = direccion fisica de AxBootInfo
         mov     rdi, [BOOTINFO_PTR]
         xor     rsi, rsi
         xor     rdx, rdx
         ; Entrada del kernel (e_entry, virtual, ya guardado en 0x6000)
         mov     rax, [ENTRY_SAVE]
-        sti
+
+        lea     rsi, [msg_jump]
+        call    serial_puts64
+
+        ; IMPORTANTE: se salta con las interrupciones DESACTIVADAS.
+        ; La IDT de modo largo aun no existe (la construye el kernel en
+        ; ax_idt_init()); si se hiciera STI aqui, el primer IRQ del PIT
+        ; (vector 8, sin descriptor valido) provocaria #GP -> doble falta
+        ; -> triple fault antes de que kmain() llegue a ejecutarse.
+        cli
         jmp     rax
+
+; --------------------------------------------------------------------------
+; Salida serie en modo largo.
+; --------------------------------------------------------------------------
+serial_putc64:                     ; AL = caracter
+        push    rax
+        push    rdx
+        mov     dx, COM1+5
+.wait:  in      al, dx
+        test    al, 0x20
+        jz      .wait
+        pop     rdx
+        pop     rax
+        mov     dx, COM1
+        out     dx, al
+        ret
+
+serial_puts64:                     ; RSI = cadena terminada en 0
+        push    rax
+        push    rsi
+.loop:  lodsb
+        test    al, al
+        jz      .fin
+        call    serial_putc64
+        jmp     .loop
+.fin:   pop     rsi
+        pop     rax
+        ret
 
 ; ==========================================================================
 ; Las rutinas de error (fatal_real / fatal_pm) estan al final de sus
@@ -987,6 +1051,8 @@ mem_size:       dd 0
 mem_size_hi:    dd 0
 e820_count:     dd 0
 e820_ptr:       dd E820_BUF
+e820_cf:        dd 0            ; ultimo CF devuelto por INT 15h/E820
+e820_ax:        dw 0            ; ultimo AX devuelto por INT 15h/E820
 ph_off:         dd 0
 ph_num:         dd 0
 ph_ent:         dd 0
@@ -1014,6 +1080,14 @@ msg_space:      db " sect=", 0
 msg_kern:       db "kernel ok", 13, 10, 0
 msg_initrd:     db "initrd ok", 13, 10, 0
 msg_pm:         db "pm", 13, 10, 0
+msg_pt:         db "pt ok", 13, 10, 0
+msg_z:          db "zero ok", 13, 10, 0
+msg_pdl:        db "pd low ok", 13, 10, 0
+msg_pdh:        db "pd high ok", 13, 10, 0
+msg_bi:         db "bi ok", 13, 10, 0
+msg_pg:         db "pg ok", 13, 10, 0
+msg_lm:         db "long mode", 13, 10, 0
+msg_jump:       db "jump kernel", 13, 10, 0
 msg_eax:        db "e820 ax=", 0
 msg_cf:         db " cf=", 0
 msg_base:       db " base=", 0

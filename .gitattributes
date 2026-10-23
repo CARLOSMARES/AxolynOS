@@ -1,0 +1,43 @@
+# Normalizacion de finales de linea.
+#
+# El proyecto se compila dentro de Ubuntu/WSL aunque el checkout se haga en
+# Windows (C:\...). Los scripts de shell, Makefiles, linker scripts y el
+# codigo fuente DEBEN usar LF: un CRLF hace fallar `bash`, `make`, `ld -T`
+# y `as`. Forzamos LF en el arbol de trabajo para que el mismo checkout
+# funcione en Windows y en Linux.
+
+* text=auto eol=lf
+
+*.sh      text eol=lf
+*.bash    text eol=lf
+*.py      text eol=lf
+Makefile  text eol=lf
+*.mk      text eol=lf
+*.ld      text eol=lf
+*.asm     text eol=lf
+*.S       text eol=lf
+*.s       text eol=lf
+*.inc     text eol=lf
+*.c       text eol=lf
+*.h       text eol=lf
+*.cpp     text eol=lf
+*.hpp     text eol=lf
+*.ax      text eol=lf
+*.expected text eol=lf
+*.md      text eol=lf
+*.json    text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+
+# Ficheros generados / binarios: nunca se normalizan.
+*.img     binary
+*.bin     binary
+*.elf     binary
+*.axb     binary
+*.axmod   binary
+*.o       binary
+*.a       binary
+*.map     binary
+*.pdf     binary
+*.png     binary
+*.jpg     binary

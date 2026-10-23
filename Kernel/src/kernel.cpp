@@ -26,6 +26,12 @@
 #include "ax_ipc.h"
 #include "ax_axfs.h"
 #include "ax_module.h"
+#include "ax_power.h"
+#include "ax_pci.h"
+#include "ax_disk.h"
+#include "ax_audio.h"
+#include "ax_video.h"
+#include "ax_fs_disk.h"
 
 /* ------------------------------------------------------------------ */
 /* Pilas propias del kernel                                             */
@@ -260,6 +266,14 @@ void ax_kernel_init(AxBootInfo* info)
 
     /* Los modulos presentes en el initrd se cargan automaticamente. */
     ax_module_autoload();
+
+    /* --- Hardware / Drivers ------------------------------------------- */
+    ax_power_init();
+    ax_pci_init();
+    ax_disk_init();
+    ax_audio_init();
+    ax_video_init();
+    ax_fs_disk_init();
 
     /* --- User mode ---------------------------------------------------- */
     ax_boot_stage_value = AX_BOOT_STAGE_USER;
