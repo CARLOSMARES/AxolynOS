@@ -1,0 +1,14 @@
+AYUDA AXOLYNOS (.axh)
+
+Los archivos de ayuda del sistema ahora usan la extension .axh.
+Se encuentran en /help/ dentro del initrd y se pueden consultar con:
+
+  man <tema>
+
+Ejemplo:
+  man help
+  man shell
+  man syscalls
+
+Los ejecutables ahora pueden usar la extension .axe
+Las librerias pueden usar la extension .axl

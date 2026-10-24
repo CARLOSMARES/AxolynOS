@@ -1,0 +1,18 @@
+COMANDO shell
+
+Shell del kernel de AxolynOS.
+
+Caracteristicas:
+- Lectura desde consola serie
+- Soporte para backspace, Ctrl+C
+- Ejecucion de aplicaciones nativas y bytecode
+- Consulta de ayuda con man (.axh)
+
+Archivos soportados:
+- .elf  Ejecutables nativos
+- .axe  Ejecutables AxolynOS
+- .axb  Aplicaciones Axolyn bytecode
+- .axl  Librerias AxolynOS
+- .axh  Archivos de ayuda
+- .axmod Modulos del kernel
+- .axfs  Initramfs

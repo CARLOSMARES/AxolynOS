@@ -120,9 +120,10 @@ static void cmd_help(void)
 {
     ax_puts("ordenes disponibles:\n");
     ax_puts("  help              esta ayuda\n");
+    ax_puts("  man <tema>        muestra ayuda desde .axh (/help/<tema>.axh)\n");
     ax_puts("  apps              aplicaciones del initrd\n");
-    ax_puts("  run <app> [args]  ejecuta una aplicacion nativa\n");
-    ax_puts("  ax <app> [args]   ejecuta una aplicacion Axolyn\n");
+    ax_puts("  run <app> [args]  ejecuta una aplicacion nativa (.elf/.axe)\n");
+    ax_puts("  ax <app> [args]   ejecuta una aplicacion Axolyn (.axb)\n");
     ax_puts("  mods              modulos cargados\n");
     ax_puts("  mem               informacion de memoria\n");
     ax_puts("  heap              informacion del heap\n");
@@ -383,6 +384,48 @@ static void shell_execute(char* line)
     const char* cmd = args[0];
 
     if (shell_streq(cmd, "help"))        cmd_help();
+    else if (shell_streq(cmd, "man")) {
+        if (count < 2) {
+            ax_puts("uso: man <tema>\n");
+        } else {
+            char path[128];
+            size_t j = 0;
+            const char* prefix = "/help/";
+            for (size_t i = 0; prefix[i] && j + 1 < sizeof(path); ++i) {
+                path[j++] = prefix[i];
+            }
+            for (size_t i = 0; args[1][i] && j + 1 < sizeof(path); ++i) {
+                path[j++] = args[1][i];
+            }
+            /* Añadir .axh si no tiene extension */
+            bool has_ext = false;
+            for (size_t i = 0; path[i]; ++i) {
+                if (path[i] == '.') {
+                    has_ext = true;
+                    break;
+                }
+            }
+            if (!has_ext && j + 5 < sizeof(path)) {
+                shell_memcpy(path + j, ".axh", 5);
+                j += 4;
+                path[j] = '\0';
+            }
+            uint64_t sz = 0;
+            const char* data = (const char*)ax_vfs_read(path, &sz);
+            if (!data || sz == 0) {
+                ax_puts("no se encuentra ayuda: ");
+                ax_puts(path);
+                ax_puts("\n");
+            } else {
+                for (uint64_t i = 0; i < sz; ++i) {
+                    ax_putc(data[i]);
+                }
+                if (sz == 0 || data[sz - 1] != '\n') {
+                    ax_putc('\n');
+                }
+            }
+        }
+    }
     else if (shell_streq(cmd, "apps"))   cmd_apps();
     else if (shell_streq(cmd, "mods"))   cmd_mods();
     else if (shell_streq(cmd, "mem"))    cmd_mem();

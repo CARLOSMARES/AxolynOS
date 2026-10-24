@@ -14,13 +14,22 @@ AxolynOS/
 │   ├── src/         implementacion en C++ y ensamblador
 │   ├── vm/          maquina virtual de bytecode (AXB) compartida
 │   ├── modules/     modulos del kernel (.axmod)
-│   ├── bootloader/  stage1 + stage2 en NASM
+│   ├── bootloader/  stage1 + stage2 + UEFI (BOOTX64.EFI)
 │   └── linker/      scripts de enlazado (kernel, modulos)
 ├── apis/            libaxos: API de usuario (syscalls, procesos, ficheros)
-├── apps/            aplicaciones base nativas (C++) y Axolyn (bytecode)
+├── apps/            aplicaciones base nativas (C++), Axolyn (bytecode) y ayuda
+│   └── help/        archivos de ayuda (.axh)
 ├── compiladores/    axc: compilador del lenguaje Axolyn + runner de pruebas
 ├── manuales/        documentacion del sistema y guias de uso
 └── scripts/         instalacion, compilacion, ejecucion y pruebas
+```
+
+Formatos de archivo:
+- `.axe` - Ejecutables AxolynOS
+- `.axl` - Librerías AxolynOS
+- `.axh` - Archivos de ayuda del sistema (sustituyen a `man`)
+- `.axmod` - Módulos del kernel
+- `.axfs` - Sistema de archivos initrd
 ```
 
 ## Puesta en marcha rapida (Ubuntu en WSL2)

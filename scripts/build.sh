@@ -262,9 +262,12 @@ build_initrd() {
     warn "falta build/tools/mkinitramfs"; return 0
   fi
   local stage="$BUILD/disk/root"
-  rm -rf "$stage"; mkdir -p "$stage/apps" "$stage/modules" "$stage/etc"
+  rm -rf "$stage"; mkdir -p "$stage/apps" "$stage/modules" "$stage/etc" "$stage/lib" "$stage/help"
   cp -f "$BUILD/apps"/*.elf "$stage/apps/" 2>/dev/null || true
   cp -f "$BUILD/apps"/*.axb "$stage/apps/" 2>/dev/null || true
+  cp -f "$BUILD/apps"/*.axe "$stage/apps/" 2>/dev/null || true
+  cp -f "$BUILD/lib"/*.axl "$stage/lib/" 2>/dev/null || true
+  cp -f "$BUILD/help"/*.axh "$stage/help/" 2>/dev/null || true
   cp -f "$BUILD/modules"/*.axmod "$stage/modules/" 2>/dev/null || true
   cp -f "$ROOT"/apps/axolyn/*.ax "$stage/apps/" 2>/dev/null || true
   cat > "$stage/etc/motd" <<'EOF'
@@ -309,6 +312,16 @@ build_bootloader() {
 # ---------------------------------------------------------------------------
 mkdirs
 
+build_uefi() {
+  step "Bootloader UEFI (BOOTX64.EFI)"
+  bash "$ROOT/scripts/build_uefi.sh"
+}
+
+do_iso() {
+  step "Generando imagen ISO híbrida BIOS + UEFI"
+  bash "$ROOT/scripts/mkiso.sh"
+}
+
 case "$TARGET" in
   all)
     build_bootloader
@@ -320,6 +333,8 @@ case "$TARGET" in
     build_apps
     build_initrd
     build_image
+    build_uefi
+    do_iso
     ;;
   bootloader) build_bootloader ;;
   tools)      build_tools ;;
@@ -330,8 +345,23 @@ case "$TARGET" in
   apps)       build_lib; build_apps ;;
   initrd)     build_initrd ;;
   image)      build_image ;;
+  uefi)       build_uefi ;;
+  bios)       build_bootloader; build_image ;;
+  iso)
+    build_bootloader
+    build_tools
+    build_compiler
+    build_kernel
+    build_modules
+    build_lib
+    build_apps
+    build_initrd
+    build_image
+    build_uefi
+    do_iso
+    ;;
   clean)      rm -rf "$BUILD"; ok "build/ borrado" ;;
-  *)          die "objetivo desconocido: $TARGET (usa: all bootloader tools compiler kernel modules lib apps initrd image clean)" ;;
+  *)          die "objetivo desconocido: $TARGET (usa: all bootloader tools compiler kernel modules lib apps initrd image iso uefi bios clean)" ;;
 esac
 
 echo

@@ -1,0 +1,22 @@
+COMANDO help
+
+Muestra la lista de comandos disponibles en el shell del kernel.
+
+Uso:
+  help
+  man <tema>
+
+Comandos principales:
+  help              Muestra esta ayuda
+  man <tema>        Muestra ayuda desde /help/<tema>.axh
+  apps              Lista aplicaciones del initrd
+  run <app> [args]  Ejecuta una aplicacion nativa (.elf, .axe)
+  ax <app> [args]   Ejecuta una aplicacion Axolyn (.axb)
+  mods              Lista modulos cargados
+  mem               Informacion de memoria
+  heap              Informacion del heap del kernel
+  uptime            Tiempo desde el arranque
+  threads           Hilos activos
+  vm                Maquinas virtuales
+  clear             Limpia la pantalla
+  reboot            Reinicia el sistema
