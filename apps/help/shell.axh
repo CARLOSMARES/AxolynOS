@@ -7,12 +7,20 @@ Caracteristicas:
 - Soporte para backspace, Ctrl+C
 - Ejecucion de aplicaciones nativas y bytecode
 - Consulta de ayuda con man (.axh)
+- run espera al proceso: al terminar se libera su ranura de user mode
+  y su hilo se elimina (no quedan zombis)
 
 Archivos soportados:
-- .elf  Ejecutables nativos
-- .axe  Ejecutables AxolynOS
-- .axb  Aplicaciones Axolyn bytecode
-- .axl  Librerias AxolynOS
-- .axh  Archivos de ayuda
+- .elf   Ejecutables nativos (ELF64 PIE)
+- .axe   Ejecutables AxolynOS (cabecera AXE1 + ELF64 PIE + CRC32)
+- .axb   Aplicaciones Axolyn bytecode
+- .axl   Librerias AxolynOS (cabecera AXL1 + archivo ar)
+- .axh   Archivos de ayuda
 - .axmod Modulos del kernel
 - .axfs  Initramfs
+
+Ordenes:
+  run <app> [args]   prueba .axe, despues .elf y por ultimo .axb
+  ax <app> [args]    ejecuta directamente un .axb
+  libs               muestra nombre, version, miembros, tamano y CRC
+                     de cada .axl del initrd

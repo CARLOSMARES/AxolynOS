@@ -1,7 +1,9 @@
 # APIs de usuario (libaxos)
 
 `libaxos` es la biblioteca que usan las aplicaciones nativas para hablar
-con el kernel. Vive en `apis/` y se compila como `build/lib/libaxos.a`.
+con el kernel. Vive en `apis/` y se compila como `build/lib/libaxos.a`
+(archivo `ar` de toda la vida) y como `build/lib/libaxos.axl` (formato
+propio: cabecera `AXL1` + el mismo archivo `ar` + CRC32).
 
 ```
 apis/include/axos/abi.h        contrato (numeros de syscall, estructuras)

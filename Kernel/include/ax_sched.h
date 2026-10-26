@@ -44,6 +44,7 @@ void      ax_sched_init(void);
 AxThread* ax_thread_create_kernel(const char* name, void (*entry)(void*), void* arg);
 AxThread* ax_thread_create_user(const char* name, uint64_t entry, uint64_t user_stack_top);
 void      ax_thread_exit(int code);
+void      ax_thread_reap(AxThread* thread);
 void      ax_thread_yield(void);
 void      ax_thread_block(void);
 void      ax_thread_wakeup(AxThread* thread);

@@ -6,8 +6,8 @@
  *   0x00  null
  *   0x08  codigo de kernel   (DPL 0, L=1 -> modo 64 bits)
  *   0x10  datos de kernel    (DPL 0)
- *   0x20  codigo de usuario  (DPL 3)  -> selector 0x23 en user mode
- *   0x24  datos de usuario   (DPL 3)  -> selector 0x2B en user mode
+ *   0x18  codigo de usuario  (DPL 3)  -> selector 0x1B en user mode
+ *   0x20  datos de usuario   (DPL 3)  -> selector 0x23 en user mode
  *   0x28  TSS (descriptor de 16 bytes)
  *
  * El TSS es imprescindible: la CPU lo usa para saber en que pila apilar el
@@ -137,7 +137,7 @@ void ax_gdt_init(void)
     /* Segmento de datos del kernel: base 0, writable, D/B=1. */
     ax_gdt_set_entry(&ax_gdt_data.entries[2], 0, 0x000FFFFF, 0x92, 0xCF);
     /* Segmentos de usuario: DPL 3 para que el codigo de ring 3 pueda
-       cargarlos con el bit RPL=3 en el selector (0x23 / 0x2B). */
+       cargarlos con el bit RPL=3 en el selector (0x1B / 0x23). */
     ax_gdt_set_entry(&ax_gdt_data.entries[3], 0, 0x000FFFFF, 0xFA, 0xAF);
     ax_gdt_set_entry(&ax_gdt_data.entries[4], 0, 0x000FFFFF, 0xF2, 0xCF);
 

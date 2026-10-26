@@ -15,6 +15,7 @@
 #include "ax_cpu.h"
 #include "ax_console.h"
 #include "ax_syscall_entry.h"
+#include "ax_keyboard.h"
 
 /* ------------------------------------------------------------------ */
 /* ------------------------------------------------------------------ */
@@ -151,6 +152,16 @@ void ax_irq_handler(ax_interrupt_frame* frame)
 {
     uint8_t irq = (uint8_t)(frame->vector - AX_IRQ_BASE);
 
+    /*
+     * El EOI se envia ANTES de atender la IRQ.  Es imprescindible hacerlo
+     * asi porque ax_timer_on_tick() puede cambiar de hilo (planificador):
+     * si el EOI quedara para el final, al cambiar de contexto el PIC
+     * seguiria con IRQ0 "en servicio" y no volverian a llegar ni el
+     * temporizador ni el teclado nunca mas.  Como durante el manejador las
+     * interrupciones estan desactivadas, no hay riesgo de reentrada.
+     */
+    ax_pic_eoi(irq);
+
     switch (irq) {
         case AX_IRQ_TIMER: {
             /* El tick del PIT actualiza el reloj y avisa al planificador. */
@@ -158,20 +169,14 @@ void ax_irq_handler(ax_interrupt_frame* frame)
             break;
         }
         case AX_IRQ_KEYBOARD: {
-            /* Leemos el codigo de escaneo para acknowledge la IRQ: si no se
-               lee el puerto 0x60 la IRQ se volveria a disparar sin parar.
-               El modulo de teclado podra sustituir esta lectura. */
-            uint8_t status;
-            __asm__ volatile("inb %1, %0" : "=a"(status) : "Nd"((uint16_t)0x60));
-            (void)status;
+            /* El driver PS/2 traduce el scancode y lo deja en su buffer
+               circular para que lo consuma la shell.  Hay que leer siempre
+               el puerto 0x60: si no, la IRQ se dispararia sin parar. */
+            ax_keyboard_irq();
             break;
         }
         default:
             break;
     }
-
-    /* Confirmamos la interrupcion al PIC (el EOI va al maestro y, si la IRQ
-       venia del esclavo, tambien al esclavo). */
-    ax_pic_eoi(irq);
 }
 

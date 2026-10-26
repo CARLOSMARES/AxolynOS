@@ -106,13 +106,6 @@ void ax_shell_init(void);
 /* RFLAGS de user mode: IF activado y el bit 1 reservado puesto a 1. */
 #define AX_USER_RFLAGS    0x202ull
 
-/*
- * Numero de ticks que se espera antes de arrancar el planificador si nadie
- * lo ha hecho (por seguridad: si el gestor de modulos no estuviera
- * enlazado, el sistema arrancaria igualmente).
- */
-#define AX_BOOT_FALLBACK_TICKS 100
-
 /* ------------------------------------------------------------------ */
 /* Estado del planificador                                             */
 /* ------------------------------------------------------------------ */
@@ -264,6 +257,19 @@ static uint64_t ax_thread_alloc_stacks(uint64_t* entry_top_out)
         *entry_top_out = kstack + AX_KERNEL_STACK_SIZE + AX_ENTRY_STACK_SIZE;
     }
     return kstack + AX_KERNEL_STACK_SIZE;
+}
+
+/* Libera las pilas de un hilo que ya ha terminado. */
+static void ax_thread_free_stacks(AxThread* t)
+{
+    if (!t || !t->kernel_stack) {
+        return;
+    }
+    const uint64_t pages = (AX_KERNEL_STACK_SIZE + AX_ENTRY_STACK_SIZE) /
+                           AX_PAGE_SIZE;
+    ax_pmm_free_pages(t->kernel_stack, pages);
+    t->kernel_stack = 0;
+    t->kernel_stack_top = 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -599,6 +605,20 @@ void ax_thread_exit(int code)
     }
 }
 
+/* Libera un hilo zombi (pila incluida) y devuelve la ranura a la tabla. */
+void ax_thread_reap(AxThread* thread)
+{
+    if (!thread || thread == g_current) {
+        return;
+    }
+    if (thread->state != AX_THREAD_ZOMBIE) {
+        return;
+    }
+    ax_thread_free_stacks(thread);
+    ax_memzero(thread, sizeof(*thread));
+    thread->state = AX_THREAD_FREE;
+}
+
 void ax_thread_yield(void)
 {
     AxThread* cur = ax_current_thread();
@@ -748,13 +768,11 @@ void ax_sched_tick(void)
     }
 
     /*
-     * Red de seguridad: si el gestor de modulos (que es quien arranca el
-     * planificador) no llegara a enlazarse, el sistema arrancaria igual
-     * pasados unos ticks.
+     * El arranque llama a ax_sched_start() al final de kmain(), asi que no
+     * hace falta arrancar el planificador desde el tick.  (Antes se hacia
+     * aqui pasados unos ticks y el shell podia adelantarse a la impresion
+     * del resumen de memoria.)
      */
-    if (!g_started && g_ticks >= AX_BOOT_FALLBACK_TICKS) {
-        ax_sched_start();
-    }
 
     AxThread* cur = g_current;
     if (!cur) {

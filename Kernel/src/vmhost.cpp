@@ -489,13 +489,13 @@ int ax_vm_run(const char* path, const char* const* argv, int argc)
     (void)argc;
 
     if (!path || !path[0]) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     uint64_t size = 0;
     const void* image = ax_vfs_read(path, &size);
     if (!image || size == 0) {
-        return -AX_ENOENT;
+        return AX_ENOENT;
     }
 
     int index = -1;
@@ -506,7 +506,7 @@ int ax_vm_run(const char* path, const char* const* argv, int argc)
         }
     }
     if (index < 0) {
-        return -AX_ENOSPC;
+        return AX_ENOSPC;
     }
 
     ax_vm_instance* inst = &g_instances[index];
@@ -533,14 +533,14 @@ int ax_vm_run(const char* path, const char* const* argv, int argc)
     AxVM* vm = nullptr;
     if (axvm_create(&cfg, &vm) != 0 || !vm) {
         inst->used = false;
-        return -AX_ENOMEM;
+        return AX_ENOMEM;
     }
 
     if (axvm_load(vm, (const uint8_t*)image, size) != 0) {
         ax_printf("[vm] '%s': %s\n", path, axvm_last_error(vm));
         axvm_destroy(vm);
         inst->used = false;
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     inst->vm = vm;
@@ -550,7 +550,7 @@ int ax_vm_run(const char* path, const char* const* argv, int argc)
         axvm_destroy(vm);
         inst->used = false;
         inst->vm = nullptr;
-        return -AX_ENOMEM;
+        return AX_ENOMEM;
     }
     inst->pid = (uint32_t)th->id;
 
@@ -571,7 +571,7 @@ int ax_vm_stop(uint64_t pid)
         inst->stop_requested = true;
         return 0;
     }
-    return -AX_EINVAL;
+    return AX_EINVAL;
 }
 
 int ax_vm_fill_info(AxVmInfo* out, uint32_t max)

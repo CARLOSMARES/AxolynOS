@@ -88,8 +88,9 @@ OFF_MEMSIZE  equ 0x60
 
 ; ==========================================================================
 ; Entrada de stage2 (modo real). Llega con:
-;   AL = sectores cargados, BX = 0x8000, CH = sectores/pista,
-;   CL = cabezas, DH = cilindros, DL = unidad de arranque
+;   AL = sectores cargados, BX = 0x8000, SI = 1 si hay LBA (0 = CHS),
+;   CH = sectores/pista, CL = cabezas, DH = cilindros,
+;   DL = unidad de arranque
 ; ==========================================================================
 stage2_entry:
         cli
@@ -101,6 +102,10 @@ stage2_entry:
         mov     sp, STACK_TOP
         sti
         mov     [drive], dl              ; unidad de arranque (de stage1)
+        movzx   eax, si
+        mov     [use_lba], al            ; modo de lectura heredado de stage1
+        mov     [spt], ch                ; geometria para el modo CHS
+        mov     [max_head], cl
 
         ; ------------------------------------------------------------------
         ; -1. Diagnostico por el puerto serie (COM1)
@@ -537,7 +542,9 @@ read_file_bytes:
 
 ; --------------------------------------------------------------------------
 ; read_sectors_staged: lee ECX sectores del LBA EAX en el buffer de staging
-; (0x2000) usando INT 13h AH=42h.
+; (0x2000).  Usa INT 13h AH=42h (LBA) si stage1 detecto extensiones; si no
+; (por ejemplo, en la emulacion de disco duro de El Torito, que solo admite
+; AH <= 0x16), traduce cada tramo a CHS y usa AH=02h.
 ;   Entrada: EAX = LBA, ECX = sectores (como mucho 8)
 ;   Salida:  CF = 1 si el BIOS fallo
 ; El DAP usa el formato estandar (el de SeaBIOS, GRUB y el nucleo de
@@ -545,6 +552,7 @@ read_file_bytes:
 ; SeaBIOS lo comprueba y devuelve error si no coincide.
 ;   +0 tamano (0x10), +1 reservado, +2 sectores, +4 offset, +6 segmento,
 ;   +8 LBA (64 bits).
+; En modo CHS se leen varios sectores por llamada, sin cruzar de pista.
 ; --------------------------------------------------------------------------
 read_sectors_staged:
         push    ebx
@@ -552,6 +560,13 @@ read_sectors_staged:
         push    esi
         push    eax
         push    ecx
+        mov     [chs_lba], eax
+        mov     [chs_cnt], ecx
+
+        cmp     byte [use_lba], 0
+        je      .chs
+
+        ; --- Lectura por LBA (AH=42h) ---
         mov     byte [DAP+0], 0x10       ; tamano del DAP (16 bytes)
         mov     byte [DAP+1], 0          ; reservado
         mov     word [DAP+2], cx         ; numero de sectores
@@ -563,9 +578,76 @@ read_sectors_staged:
         mov     dl, [drive]
         mov     ah, 0x42
         int     0x13
+        jc      .fallback
+        jmp     .ok
+
+.fallback:
+        ; El BIOS no supo leer por LBA: seguimos por CHS desde el principio.
+        mov     byte [use_lba], 0
+        mov     eax, [chs_lba]
+        mov     ecx, [chs_cnt]
+
+        ; --- Lectura por CHS (AH=02h), tramos sin cruzar de pista ---
+.chs:
+        mov     word [chs_off], STAGE_BUF
+.loop:
+        cmp     dword [chs_cnt], 0
+        je      .ok
+        ; LBA -> CHS con la geometria que nos paso stage1
+        movzx   ebx, byte [spt]
+        test    ebx, ebx
+        jz      .fail
+        movzx   ecx, byte [max_head]
+        inc     ecx
+        imul    ebx, ecx                 ; sectores por cilindro
+        mov     eax, [chs_lba]
+        xor     edx, edx
+        div     ebx                      ; EAX = cilindro, EDX = resto
+        mov     [chs_cyl], eax
+        mov     eax, edx
+        xor     edx, edx
+        movzx   ebx, byte [spt]
+        div     ebx                      ; EAX = cabeza, EDX = sector-1
+        mov     [chs_head], al
+
+        ; sectores que caben hasta el final de la pista
+        movzx   ecx, byte [spt]
+        sub     ecx, edx
+        cmp     ecx, [chs_cnt]
+        jbe     .n_ok
+        mov     ecx, [chs_cnt]
+.n_ok:
+        mov     [chs_n], cl
+
+        mov     ebx, [chs_cyl]
+        mov     ch, bl                   ; cilindro (8 bits bajos)
+        shr     ebx, 8
+        and     bl, 3                    ; cilindro (2 bits altos)
+        shl     bl, 6
+        mov     cl, dl
+        inc     cl                       ; sector (1..spt)
+        or      cl, bl
+        mov     dh, [chs_head]
+        mov     dl, [drive]
+        mov     bx, [chs_off]
+        mov     al, [chs_n]
+        mov     ah, 0x02
+        int     0x13
         jc      .fail
+
+        movzx   eax, byte [chs_n]
+        add     [chs_lba], eax
+        sub     [chs_cnt], eax
+        shl     eax, 9
+        add     [chs_off], ax
+        jmp     .loop
+
+.ok:
         clc
+        jmp     .done
 .fail:
+        stc
+.done:
         pop     ecx                    ; el BIOS puede alterar EAX/ECX
         pop     eax
         pop     esi
@@ -1038,6 +1120,15 @@ serial_puts64:                     ; RSI = cadena terminada en 0
 ; Datos
 ; ==========================================================================
 drive:          db 0
+use_lba:        db 0            ; 1 = AH=42h, 0 = CHS (AH=02h)
+spt:            db 0            ; sectores por pista (modo CHS)
+max_head:       db 0            ; cabezas maximas (modo CHS)
+chs_lba:        dd 0
+chs_cnt:        dd 0
+chs_off:        dw 0
+chs_cyl:        dd 0
+chs_head:       db 0
+chs_n:          db 0
 kernel_lba:     dd 0
 kernel_sectors: dd 0
 initrd_lba:     dd 0

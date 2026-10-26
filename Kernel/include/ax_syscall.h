@@ -16,13 +16,13 @@
 
 typedef int (*ax_syscall_handler)(uint64_t* args, uint64_t* ret);
 
-/* Registra un handler; devuelve 0 o -AX_EBUSY si el numero ya existe. */
+/* Registra un handler; devuelve 0 o AX_EBUSY si el numero ya existe. */
 int  ax_syscall_register(uint64_t nr, ax_syscall_handler handler);
 
 /*
  * Reparte la llamada: busca el handler registrado para "nr" y lo invoca.
  * Si no hay handler, se consulta al anfitrion de la maquina virtual y, si
- * tampoco lo sabe, devuelve -AX_ENOSYS.
+ * tampoco lo sabe, devuelve AX_ENOSYS.
  *
  *   args = { RDI, RSI, RDX, R10, R8, R9, <canal de retorno> }
  */

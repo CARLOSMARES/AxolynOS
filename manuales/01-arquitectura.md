@@ -39,21 +39,22 @@ lo que puede crecer:
 | Rango | Uso |
 |---|---|
 | `0x00000000 - 0x000FFFFF` | BIOS, EBDA, tablas de paginas del arranque |
-| `0x00100000 - 0x001FFFFF` | memoria disponible para user mode |
+| `0x00100000 - 0x001FFFFF` | zona libre entre el area del BIOS y el kernel |
 | `0x00200000 - 0x021FFFFF` | region reservada del kernel (32 MiB) |
 | `0x00A00000` | tablas de paginas (kernel + mapa bajo) |
 | `0x00E00000` | bitmap del gestor de memoria fisica |
 | `0x00F00000` | heap del kernel (8 MiB) |
 | `0x01700000` | area de staging para modulos (8 MiB) |
 | `0x01F00000` | initramfs (imagen AXFS) |
+| `0x04000000 - 0x0BFFFFFF` | region de user mode (8 ranuras de 16 MiB) |
 | resto | disponible para el PMM |
 
 ### 2.2 Virtual
 
 | Rango | Uso | Anillo |
 |---|---|---|
-| `0x0000000000400000` | base de las aplicaciones (16 MiB por ranura) | 3 |
-| `0x0000000000FF00000` | cima de las pilas de user mode | 3 |
+| `0x0000000004000000` | base de las aplicaciones (8 ranuras de 16 MiB) | 3 |
+| `0x000000000C000000` | fin de la region de user mode (192 MiB) | - |
 | `0xFFFFFFFF80200000` | imagen del kernel | 0 |
 | `0xFFFFFFFF82200000` | ventana de modulos (16 ranuras de 1 MiB) | 0 |
 | `0xFFFFFFFFA0000000` | sombra de las tablas de paginas de user mode | 0 |

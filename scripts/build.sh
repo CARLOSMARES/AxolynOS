@@ -207,6 +207,14 @@ build_lib() {
   [ ${#objs[@]} -eq 0 ] && { warn "apis/src vacio"; return 0; }
   ar rcs "$BUILD/lib/libaxos.a" "${objs[@]}"
   ok "build/lib/libaxos.a"
+
+  # Formato de distribucion .axl (cabecera + archivo ar + CRC32).
+  if [ -x "$TOOLS/mkaxl" ]; then
+    "$TOOLS/mkaxl" "$BUILD/lib/libaxos.a" "$BUILD/lib/libaxos.axl" libaxos
+    ok "build/lib/libaxos.axl"
+  else
+    warn "falta build/tools/mkaxl: no se genera libaxos.axl"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -216,29 +224,36 @@ build_apps() {
   step "Aplicaciones nativas"
   need g++
   rm -rf "$OBJ/apps"; mkdir -p "$OBJ/apps"
-  local src name objs=()
+
+  # Enlazamos contra la biblioteca extraida de libaxos.axl.  Asi el .axl no
+  # es solo un artefacto de distribucion: es la entrada real del enlazador.
+  local lib="$BUILD/lib/libaxos.a"
+  if [ -x "$TOOLS/axl2a" ] && [ -f "$BUILD/lib/libaxos.axl" ]; then
+    "$TOOLS/axl2a" "$BUILD/lib/libaxos.axl" "$OBJ/lib/libaxos.from_axl.a"
+    lib="$OBJ/lib/libaxos.from_axl.a"
+    info "enlazando contra libaxos.axl"
+  fi
+  if [ ! -f "$lib" ]; then
+    die "falta $lib (ejecuta antes: bash scripts/build.sh lib)"
+  fi
+
+  local src name
   for src in "$ROOT"/apps/native/*.cpp; do
     [ -e "$src" ] || continue
     name="$(basename "$src" .cpp)"
-    objs=()
-    for f in "$ROOT"/apis/src/*.cpp; do
-      [ -e "$f" ] || continue
-      objs+=("$OBJ/apps/${name}_$(basename "$f" .cpp).o")
-      g++ "${USER_CFLAGS[@]}" -c "$f" -o "${objs[-1]}"
-    done
-    for f in "$ROOT"/apis/src/*.S; do
-      [ -e "$f" ] || continue
-      objs+=("$OBJ/apps/${name}_$(basename "$f" .S).o")
-      as --64 -o "${objs[-1]}" "$f"
-    done
-    objs+=("$OBJ/apps/${name}_main.o")
     g++ "${USER_CFLAGS[@]}" -c "$src" -o "$OBJ/apps/${name}_main.o"
-    g++ -fPIE -pie -nostdlib -static -Wl,--build-id=none \
+    g++ -fPIE -pie -nostdlib -Wl,--build-id=none -Wl,--no-dynamic-linker \
         -Wl,-T,"$ROOT/apis/linker/userspace.ld" \
-        -o "$BUILD/apps/$name.elf" "${objs[@]}"
+        -Wl,--undefined=_start \
+        -o "$BUILD/apps/$name.elf" "$OBJ/apps/${name}_main.o" "$lib"
     info "$name.elf"
+
+    # Paquete .axe (cabecera + ELF64 + CRC32).
+    if [ -x "$TOOLS/mkaxe" ]; then
+      "$TOOLS/mkaxe" "$BUILD/apps/$name.elf" "$BUILD/apps/$name.axe" "$name"
+    fi
   done
-  ok "aplicaciones nativas"
+  ok "aplicaciones nativas (.elf + .axe)"
 
   step "Aplicaciones Axolyn (bytecode)"
   if [ ! -x "$BUILD/axc" ]; then
@@ -267,7 +282,7 @@ build_initrd() {
   cp -f "$BUILD/apps"/*.axb "$stage/apps/" 2>/dev/null || true
   cp -f "$BUILD/apps"/*.axe "$stage/apps/" 2>/dev/null || true
   cp -f "$BUILD/lib"/*.axl "$stage/lib/" 2>/dev/null || true
-  cp -f "$BUILD/help"/*.axh "$stage/help/" 2>/dev/null || true
+  cp -f "$ROOT"/apps/help/*.axh "$stage/help/" 2>/dev/null || true
   cp -f "$BUILD/modules"/*.axmod "$stage/modules/" 2>/dev/null || true
   cp -f "$ROOT"/apps/axolyn/*.ax "$stage/apps/" 2>/dev/null || true
   cat > "$stage/etc/motd" <<'EOF'

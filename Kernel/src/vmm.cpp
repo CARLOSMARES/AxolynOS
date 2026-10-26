@@ -291,25 +291,29 @@ static void ax_vmm_build_low_map(uint64_t ram_bytes)
     /* --- Region 0..32 MiB: paginas de 4 KiB en modo supervisor ------- */
     /* El modo supervisor es obligatorio: ahi viven la VGA, las tablas del
        firmware y toda la region reservada del kernel (imagen, tablas de
-       pagina, bitmap, heap, staging e initrd). */
+       pagina, bitmap, heap, staging e initrd).  Tiene que ser ESCRIBIBLE:
+       el kernel modifica sus propias variables (.bss), las tablas de pagina
+       en AX_PTABLES_PHYS y la memoria de video.  Con CR0.WP=1 (como deja el
+       firmware UEFI) una pagina de solo lectura provoca #PF al escribir. */
     for (uint64_t addr = 0; addr < AX_KERNEL_REGION_SIZE; addr += AX_PAGE_SIZE) {
-        ax_vmm_map(addr, addr, 0);
+        ax_vmm_map(addr, addr, AX_PAGE_WRITE);
     }
 
     /* --- Region 32 MiB..limite: paginas de 2 MiB en modo user ------- */
-    /* Se marquan como USER para que las aplicaciones en ring 3 puedan
-       acceder a la RAM que les asigne el planificador. */
+    /* Se marcan como USER para que las aplicaciones en ring 3 puedan
+       acceder a la RAM que les asigne el planificador, y WRITE porque el
+       kernel tambien escribe ahi (carga de ELF, pilas, etc.). */
     uint64_t addr = AX_KERNEL_REGION_SIZE;
     /* La ultima pagina de 2 MiB puede quedar incompleta: la parte final se
        mapea con paginas de 4 KiB. */
     uint64_t aligned_end = limit & ~0x1FFFFFull;
 
     while (addr < aligned_end) {
-        ax_vmm_map_2m(addr, addr, AX_PAGE_USER);
+        ax_vmm_map_2m(addr, addr, AX_PAGE_WRITE | AX_PAGE_USER);
         addr += 0x200000;
     }
     while (addr < limit) {
-        ax_vmm_map(addr, addr, AX_PAGE_USER);
+        ax_vmm_map(addr, addr, AX_PAGE_WRITE | AX_PAGE_USER);
         addr += AX_PAGE_SIZE;
     }
 
@@ -340,16 +344,18 @@ void ax_vmm_init(void)
     ax_vmm_build_low_map(ram_bytes);
 
     /* --- Ventana del kernel (mitad superior) ------------------------ */
-    /* 0xFFFFFFFF80200000 -> 0x200000, 32 MiB con paginas de 2 MiB. */
+    /* 0xFFFFFFFF80200000 -> 0x200000, 32 MiB con paginas de 2 MiB.
+       ESCRIBIBLE: aqui viven .data/.bss, la pila y el heap del kernel. */
     for (uint64_t i = 0; i < AX_KERNEL_REGION_SIZE / 0x200000; ++i) {
         ax_vmm_map_2m(AX_KERNEL_VIRT_BASE + i * 0x200000,
-                      AX_KERNEL_PHYS_BASE + i * 0x200000, 0);
+                      AX_KERNEL_PHYS_BASE + i * 0x200000, AX_PAGE_WRITE);
     }
 
     /* --- Mapa sombra de las tablas de pagina ------------------------ */
     /* AX_SHADOW_VIRT_BASE cae en el mismo PD que la ventana del kernel, asi
-       que se mapea aqui la primera MiB del area de tablas. */
-    ax_vmm_map_2m(AX_SHADOW_VIRT_BASE, AX_PTABLES_PHYS, 0);
+       que se mapea aqui la primera MiB del area de tablas.  ESCRIBIBLE para
+       poder modificar las tablas desde el espacio del kernel. */
+    ax_vmm_map_2m(AX_SHADOW_VIRT_BASE, AX_PTABLES_PHYS, AX_PAGE_WRITE);
 
     ax_vmm_batch = false;
 

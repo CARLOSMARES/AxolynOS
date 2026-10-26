@@ -32,6 +32,7 @@
 #include "ax_audio.h"
 #include "ax_video.h"
 #include "ax_fs_disk.h"
+#include "ax_keyboard.h"
 
 /* ------------------------------------------------------------------ */
 /* Pilas propias del kernel                                             */
@@ -239,7 +240,9 @@ void ax_kernel_init(AxBootInfo* info)
     /* --- PIC y temporizador ----------------------------------------- */
     ax_pic_init();
     ax_timer_init();
-    ax_printf("[cpu] PIC remapeado a 0x20-0x2F, PIT a %d Hz\n", AX_TIMER_FREQ_HZ);
+    ax_keyboard_init();
+    ax_printf("[cpu] PIC remapeado a 0x20-0x2F, PIT a %d Hz, teclado PS/2 (IRQ1)\n",
+              AX_TIMER_FREQ_HZ);
 
     /* --- Subsistemas del kernel --------------------------------------- */
     ax_boot_stage_value = AX_BOOT_STAGE_SCHED;
@@ -287,11 +290,15 @@ void ax_kernel_init(AxBootInfo* info)
     /* --- Resumen final ----------------------------------------------- */
     ax_boot_time_value = ax_timer_ms();
 
-    /* El shell del kernel es un hilo mas: se crea cuando el planificador ya
-       esta en marcha. */
-    ax_shell_init();
-
     ax_meminfo_summary();
+
+    /*
+     * El shell del kernel es un hilo mas.  Se crea DESPUES del resumen:
+     * en cuanto hay un hilo listo, el siguiente tick del temporizador le
+     * cede el CPU y el banner de la shell se mezclaria con las ultimas
+     * lineas del arranque.
+     */
+    ax_shell_init();
 
     ax_boot_stage_value = AX_BOOT_STAGE_READY;
 
@@ -300,6 +307,17 @@ void ax_kernel_init(AxBootInfo* info)
     ax_enable_interrupts();
 
     ax_printf("[kernel] %s listo.\n", AX_KERNEL_NAME);
+
+    /*
+     * kmain() no debe retornar: boot.S ejecuta "cli; hlt" al volver y el
+     * sistema se quedaria sin temporizador ni teclado.  ax_sched_start()
+     * entrega el CPU al primer hilo listo (el shell) y no retorna.
+     */
+    ax_sched_start();
+
+    for (;;) {
+        __asm__ __volatile__("hlt");
+    }
 }
 
 /* ------------------------------------------------------------------ */

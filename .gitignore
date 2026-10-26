@@ -10,6 +10,11 @@ build/
 *.map
 *.log
 
+# Intermedios del cargador UEFI y del generador PE
+Kernel/bootloader/uefi/BOOTX64.so
+__pycache__/
+*.pyc
+
 # Editores
 .vscode/
 .idea/

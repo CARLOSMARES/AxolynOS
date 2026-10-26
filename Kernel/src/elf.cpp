@@ -55,18 +55,18 @@ int ax_elf_inspect(const void* image, uint64_t size, uint64_t* entry,
                     uint64_t* lowest_vaddr, uint64_t* highest_vaddr)
 {
     if (!image || size < sizeof(ax_elf64_ehdr)) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     const ax_elf64_ehdr* eh = (const ax_elf64_ehdr*)image;
     if (!ax_magic_ok(eh->e_ident)) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     if (eh->e_ident[4] != 2) {          /* ELFCLASS64 */
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     if (eh->e_machine != 62) {          /* EM_X86_64 */
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     if (entry) {
@@ -116,24 +116,24 @@ int ax_elf_load_user(const void* image, uint64_t size, uint64_t vaddr_base,
                      uint64_t* entry_out)
 {
     if (!image || !entry_out) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     if (size < sizeof(ax_elf64_ehdr)) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     const ax_elf64_ehdr* eh = (const ax_elf64_ehdr*)image;
     if (!ax_magic_ok(eh->e_ident) || eh->e_ident[4] != 2 || eh->e_machine != 62) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     if (eh->e_type != 2 /* ET_EXEC */ && eh->e_type != 3 /* ET_DYN */) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     if (!eh->e_phnum || !eh->e_phoff) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     if (eh->e_phoff + (uint64_t)eh->e_phnum * eh->e_phentsize > size) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     /* Para un ET_EXEC las direcciones ya son absolutas: la base es 0. */
@@ -151,10 +151,10 @@ int ax_elf_load_user(const void* image, uint64_t size, uint64_t vaddr_base,
             continue;
         }
         if (ph->p_offset + ph->p_filesz > size) {
-            return -AX_EINVAL;
+            return AX_EINVAL;
         }
         if (ph->p_vaddr + ph->p_memsz < ph->p_vaddr) {
-            return -AX_EINVAL;
+            return AX_EINVAL;
         }
 
         uint64_t dest = base + ph->p_vaddr;
@@ -162,12 +162,12 @@ int ax_elf_load_user(const void* image, uint64_t size, uint64_t vaddr_base,
         /* El destino tiene que estar dentro de la region de user mode. */
         if (dest < AX_USER_VIRT_BASE ||
             dest + ph->p_memsz > AX_USER_REGION_END) {
-            return -AX_ERANGE;
+            return AX_ERANGE;
         }
         /* Y la pagina tiene que estar mapeada (el mapa de identidad cubre
            la region de user mode si hay suficiente RAM). */
         if (ax_vmm_translate(dest) == 0) {
-            return -AX_ENOMEM;
+            return AX_ENOMEM;
         }
 
         if (ph->p_filesz > 0) {
@@ -188,7 +188,7 @@ int ax_elf_load_user(const void* image, uint64_t size, uint64_t vaddr_base,
     }
 
     if (highest == 0) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     /* --- Relocaciones ---------------------------------------------- */
@@ -242,7 +242,7 @@ int ax_elf_load_user(const void* image, uint64_t size, uint64_t vaddr_base,
                 continue;
             }
             if (off + sz > size) {
-                return -AX_EINVAL;
+                return AX_EINVAL;
             }
             for (uint64_t o = 0; o + rela_ent <= sz; o += rela_ent) {
                 const ax_elf64_rela* rela = (const ax_elf64_rela*)
@@ -257,7 +257,7 @@ int ax_elf_load_user(const void* image, uint64_t size, uint64_t vaddr_base,
 
                 uint64_t where = base + rela->r_offset;
                 if (where < AX_USER_VIRT_BASE || where + 8 > AX_USER_REGION_END) {
-                    return -AX_ERANGE;
+                    return AX_ERANGE;
                 }
                 uint64_t* slot = (uint64_t*)(uintptr_t)where;
                 *slot = base + (uint64_t)rela->r_addend;

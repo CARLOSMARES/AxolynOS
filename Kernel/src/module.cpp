@@ -195,33 +195,33 @@ static int ax_module_find_by_name(const char* name)
 int ax_module_load_buffer(const char* name, const void* image, uint64_t size)
 {
     if (!name || !image || size < sizeof(AxModHeader)) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     const AxModHeader* hdr = (const AxModHeader*)image;
     if (hdr->magic[0] != 'A' || hdr->magic[1] != 'X' || hdr->magic[2] != 'M' ||
         hdr->magic[3] != 'O' || hdr->magic[4] != 'D') {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     if (hdr->abi_version != AX_MOD_ABI_VERSION) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     int index = ax_module_find_free_slot();
     if (index < 0) {
-        return -AX_ENOSPC;
+        return AX_ENOSPC;
     }
 
     /* Un modulo no se carga dos veces. */
     if (ax_module_find_by_name(name) >= 0) {
-        return -AX_EBUSY;
+        return AX_EBUSY;
     }
 
     /* El modulo ocupa una ranura completa de 1 MiB. */
     uint64_t pages = AX_MODULES_SLOT_SIZE / AX_PAGE_SIZE;
     uint64_t phys  = ax_pmm_alloc_pages(pages);
     if (!phys) {
-        return -AX_ENOMEM;
+        return AX_ENOMEM;
     }
 
     uint64_t base = AX_MODULES_VIRT_BASE + (uint64_t)index * AX_MODULES_SLOT_SIZE;
@@ -234,7 +234,7 @@ int ax_module_load_buffer(const char* name, const void* image, uint64_t size)
                 ax_vmm_unmap(base + k * AX_PAGE_SIZE);
             }
             ax_pmm_free_pages(phys, pages);
-            return -AX_ENOMEM;
+            return AX_ENOMEM;
         }
     }
 
@@ -259,7 +259,7 @@ int ax_module_load_buffer(const char* name, const void* image, uint64_t size)
         for (uint64_t k = 0; k < pages; ++k) {
             ax_vmm_unmap(base + k * AX_PAGE_SIZE);
         }
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     ax_module_slot* m = &g_modules[index];
@@ -287,11 +287,11 @@ int ax_module_load_buffer(const char* name, const void* image, uint64_t size)
 
     /* Se llama al punto de entrada del modulo. */
     ax_module_init_fn init = (ax_module_init_fn)(uintptr_t)(base + hdr->init_offset);
-    int rc = init ? init(&m->ctx) : -AX_EINVAL;
+    int rc = init ? init(&m->ctx) : AX_EINVAL;
     if (rc != 0) {
         ax_printf("[module] '%s': la inicializacion fallo (%d)\n", name, rc);
         m->state = AX_MOD_STATE_FAILED;
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     ax_printf("[module] '%s' loaded in slot %d at %p\n", name, index,
@@ -302,7 +302,7 @@ int ax_module_load_buffer(const char* name, const void* image, uint64_t size)
 int ax_module_load(const char* name)
 {
     if (!name || !name[0]) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     /* Si el nombre ya viene con ruta se usa tal cual; si no, se busca en
@@ -329,7 +329,7 @@ int ax_module_load(const char* name)
            raiz del initrd). */
         image = ax_vfs_read(name, &size);
         if (!image) {
-            return -AX_ENOENT;
+            return AX_ENOENT;
         }
         ax_strlcpy(path, name, sizeof(path));
     }
@@ -364,11 +364,11 @@ int ax_module_load(const char* name)
 int ax_module_unload(uint32_t index)
 {
     if (index >= AX_MODULES_MAX) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     ax_module_slot* m = &g_modules[index];
     if (m->state != AX_MOD_STATE_LOADED) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     /* Se liberan los simbolos publicados por el modulo. */
@@ -398,7 +398,7 @@ int ax_module_unload(uint32_t index)
 int ax_module_publish(const char* name, void* symbol)
 {
     if (!name || !name[0]) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     for (int i = 0; i < AX_MODULE_MAX_SYMBOLS; ++i) {
         if (g_symbols[i].used && ax_streq(g_symbols[i].name, name)) {
@@ -414,7 +414,7 @@ int ax_module_publish(const char* name, void* symbol)
             return 0;
         }
     }
-    return -AX_ENOSPC;
+    return AX_ENOSPC;
 }
 
 void* ax_module_lookup(const char* name)

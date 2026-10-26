@@ -6,7 +6,7 @@
  * remitente.
  *
  * El receptor que espera (ax_ipc_recv) se bloquea si el buzon esta vacio;
- * el que no puede esperar (ax_ipc_try_recv) devuelve -AX_EAGAIN.
+ * el que no puede esperar (ax_ipc_try_recv) devuelve AX_EAGAIN.
  *
  * Documentacion: manuales/07-ipc.md
  */
@@ -67,18 +67,18 @@ void ax_ipc_init(void)
 int ax_ipc_send(int port, const void* data, uint64_t len)
 {
     if (!ax_port_valid(port)) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     if (!data && len > 0) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     if (len > AX_IPC_MSG_MAX) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     ax_ipc_port* p = &g_ports[port];
     if (p->count >= AX_IPC_MAX_MSG) {
-        return -AX_EBUSY;   /* el buzon esta lleno */
+        return AX_EBUSY;   /* el buzon esta lleno */
     }
 
     p->used = true;
@@ -105,15 +105,15 @@ int ax_ipc_send(int port, const void* data, uint64_t len)
 int ax_ipc_try_recv(int port, void* buf, uint64_t max)
 {
     if (!ax_port_valid(port)) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     if (!buf && max > 0) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     ax_ipc_port* p = &g_ports[port];
     if (p->count == 0) {
-        return -AX_EAGAIN;
+        return AX_EAGAIN;
     }
 
     uint32_t    idx  = (p->head + AX_IPC_MAX_MSG - p->count) % AX_IPC_MAX_MSG;
@@ -134,12 +134,12 @@ int ax_ipc_try_recv(int port, void* buf, uint64_t max)
 int ax_ipc_recv(int port, void* buf, uint64_t max)
 {
     if (!ax_port_valid(port)) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     for (;;) {
         int r = ax_ipc_try_recv(port, buf, max);
-        if (r != -AX_EAGAIN) {
+        if (r != AX_EAGAIN) {
             return r;
         }
         /* No hay ningun mensaje: el hilo se duerme hasta que otro lo deje. */

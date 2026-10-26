@@ -10,7 +10,9 @@ Comandos principales:
   help              Muestra esta ayuda
   man <tema>        Muestra ayuda desde /help/<tema>.axh
   apps              Lista aplicaciones del initrd
-  run <app> [args]  Ejecuta una aplicacion nativa (.elf, .axe)
+  libs              Lista bibliotecas .axl del initrd
+  run <app> [args]  Ejecuta una aplicacion nativa (.axe, .elf)
+                    y espera a que termine
   ax <app> [args]   Ejecuta una aplicacion Axolyn (.axb)
   mods              Lista modulos cargados
   mem               Informacion de memoria
@@ -20,3 +22,10 @@ Comandos principales:
   vm                Maquinas virtuales
   clear             Limpia la pantalla
   reboot            Reinicia el sistema
+
+Formatos:
+  .axe  ejecutable AxolynOS (cabecera + ELF64 PIE + CRC32)
+  .axl  biblioteca AxolynOS (cabecera + archivo ar + CRC32)
+  .elf  ejecutable ELF nativo (compatibilidad)
+  .axb  bytecode del lenguaje Axolyn
+  .axh  ayuda del sistema

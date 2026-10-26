@@ -10,15 +10,23 @@
 ;
 ; Responsabilidades de este sector:
 ;   1. Preparar segmentos, pila e interrupciones.
-;   2. Instalar un INT 13h propio que traduce CHS -> LBA (discos grandes).
-;   3. Leer la geometria del disco (INT 13h AH=08h).
+;   2. Leer la geometria del disco (INT 13h AH=08h).
+;   3. Detectar si el BIOS soporta lecturas LBA (INT 13h AH=41h).
 ;   4. Leer la cabecera AXDSK (LBA 64) para conocer stage2_sectors.
-;   5. Cargar stage2 (LBA 1) en 0x8000 con INT 13h AH=42h (LBA).
-;   6. Saltar a stage2 pasandole geometria y unidad en los registros.
+;   5. Cargar stage2 (LBA 1) en 0x8000.
+;   6. Saltar a stage2 pasandole geometria, unidad y modo de lectura.
+;
+; IMPORTANTE: la emulacion de disco duro de El Torito (CD) solo admite
+; comandos antiguos de INT 13h (AH <= 0x16); en ese caso AH=42h falla y
+; hay que leer por CHS (AH=02h).  Para que el BIOS de la emulacion pueda
+; calcular la geometria (SeaBIOS lee el CHS final de la particion 1 del
+; MBR), la tabla de particiones lleva una entrada valida que cubre la
+; imagen completa.
 ;
 ; Contrato de registros entregado a stage2:
 ;   AL = numero de sectores de stage2 cargados
 ;   BX = 0x8000 (direccion de stage2)
+;   SI = 1 si las lecturas usan LBA, 0 si usan CHS
 ;   CH = sectores por pista
 ;   CL = numero maximo de cabezas
 ;   DH = numero maximo de cilindros (mod 256)
@@ -47,18 +55,6 @@ start:
         mov     [boot_drive], dl         ; guardamos la unidad de arranque
 
         ; ------------------------------------------------------------------
-        ; Instalar nuestro INT 13h (guardamos antes el vector original).
-        ; ------------------------------------------------------------------
-        cli
-        mov     ax, [0x13*4]
-        mov     [orig13], ax
-        mov     ax, [0x13*4+2]
-        mov     [orig13+2], ax
-        mov     word [0x13*4], int13
-        mov     word [0x13*4+2], 0
-        sti
-
-        ; ------------------------------------------------------------------
         ; Geometria del disco: INT 13h AH=08h
         ;   CH = cilindros (8 bits bajos), CL = sectores/pista (bits 0-5)
         ;   DH = cabezas maximas, DL = numero de unidades
@@ -71,21 +67,33 @@ start:
         and     cl, 0x3F
         mov     [spt], cl
         mov     [max_head], dh
+        test    cl, cl
+        jz      disk_error              ; sin geometria no se puede leer CHS
+
+        ; ------------------------------------------------------------------
+        ; Detectar extensiones LBA (INT 13h AH=41h).
+        ;   Salida: CF=0 y BX=0xAA55 si estan disponibles.
+        ; En la emulacion de CD de El Torito esta llamada falla: la unidad
+        ; emulada solo acepta AH <= 0x16.
+        ; ------------------------------------------------------------------
+        mov     byte [use_lba], 0
+        mov     ah, 0x41
+        mov     bx, 0x55AA
+        mov     dl, [boot_drive]
+        int     0x13
+        jc      .sin_lba
+        cmp     bx, 0xAA55
+        jne     .sin_lba
+        mov     byte [use_lba], 1
+.sin_lba:
 
         ; ------------------------------------------------------------------
         ; Leer la cabecera AXDSK (LBA 64) en 0x8000. Necesitamos
         ; stage2_sectors para saber cuanto cargar.
         ; ------------------------------------------------------------------
-        mov     word [dap+2], 1          ; 1 sector
-        mov     word [dap+4], STAGE2_ADDR ; offset destino
-        mov     word [dap+6], 0          ; segmento destino
-        mov     dword [dap+8], HEADER_LBA
-        mov     dword [dap+12], 0
-        mov     si, dap
-        mov     bx, dap                  ; DS:SI y ES:BX -> DAP
-        mov     ah, 0x42
-        mov     dl, [boot_drive]
-        int     0x13
+        mov     ax, HEADER_LBA
+        mov     bx, STAGE2_ADDR
+        call    read_sector
         jc      disk_error
 
         ; Comprueba la firma "AXDSK001"
@@ -107,23 +115,24 @@ start:
 .sectors_ok:
         mov     [stage2_cnt], ax
 
-        mov     word [dap+2], ax          ; sectores a leer
-        mov     word [dap+4], STAGE2_ADDR
-        mov     word [dap+6], 0
-        mov     dword [dap+8], 1          ; LBA 1
-        mov     dword [dap+12], 0
-        mov     si, dap
-        mov     bx, dap
-        mov     ah, 0x42
-        mov     dl, [boot_drive]
-        int     0x13
+        mov     ax, 1                    ; LBA del primer sector de stage2
+        mov     di, STAGE2_ADDR          ; destino
+        mov     si, [stage2_cnt]
+.load2:
+        mov     bx, di
+        call    read_sector
         jc      disk_error
+        inc     ax
+        add     di, 512
+        dec     si
+        jnz     .load2
 
         ; ------------------------------------------------------------------
-        ; Salto a stage2 con la geometria en los registros.
+        ; Salto a stage2 con la geometria, la unidad y el modo de lectura.
         ; ------------------------------------------------------------------
         mov     bx, STAGE2_ADDR
         mov     al, [stage2_cnt]         ; sectores cargados
+        movzx   si, byte [use_lba]       ; 1 = LBA, 0 = CHS
         mov     ch, [spt]                ; sectores por pista
         mov     cl, [max_head]           ; cabezas maximas
         mov     dh, [max_cyl]            ; cilindros maximos
@@ -141,109 +150,69 @@ disk_error:
 .hang:  hlt
         jmp     .hang
 
-; ==========================================================================
-; INT 13h propio.
-;   AH=00h : reset              -> reenviado al BIOS
-;   AH=08h : geometria          -> reenviado al BIOS
-;   AH=02h : lectura CHS        -> traducida a LBA y hecha con AH=42h
-;   AH=42h : lectura extendida  -> reenviada al BIOS
-; ==========================================================================
-int13:
-        cmp     ah, 0x02
-        je      i13_chs
-        cmp     ah, 0x42
-        je      i13_bios
-        cmp     ah, 0x00
-        je      i13_bios
-        cmp     ah, 0x08
-        je      i13_bios
-        stc
-        retf    2
-
-; --- Reenvio al INT 13h original del BIOS --------------------------------
-; Entrada como interrupcion: el frame del BIOS consume 6 bytes igual que
-; empujo la CPU con "int", asi que "retf 2" deja la pila equilibrada.
-i13_bios:
-        call    do_bios
-        retf    2
-
-; --- Reenvio interno (usado tambien por la traduccion CHS -> LBA) --------
-; Para no depender de la convencion de retorno del BIOS, restauramos el
-; vector original, llamamos con "int 0x13" y reinstallamos el nuestro.
-;
-; OJO: hay que conservar AH (el numero de funcion) durante el intercambio de
-; vectores.  Si se pierde, el BIOS recibe otra funcion y devuelve error.
-; Por eso AX se apila al entrar y se restaura con las interrupciones
-; desactivadas, justo antes de la llamada.
-do_bios:
-        push    ax
-        cli
-        mov     ax, [orig13]
-        mov     [0x13*4], ax
-        mov     ax, [orig13+2]
-        mov     [0x13*4+2], ax
-        pop     ax                     ; AH = funcion pedida por el llamante
-        sti
-        int     0x13
-        push    ax                      ; salva el estado devuelto (AH)
-        cli
-        mov     word [0x13*4], int13
-        mov     word [0x13*4+2], 0
-        pop     ax
-        sti
-        ret
-
-; --- Lectura CHS -> se traduce a LBA y se hace con AH=42h -----------------
-i13_chs:
+; --------------------------------------------------------------------------
+; read_sector: lee un sector (512 bytes) y lo deja en ES:BX.
+;   Entrada: AX = LBA (16 bits), ES:BX = destino
+;   Salida:  CF = 1 si el BIOS devolvio error
+; Usa AH=42h (LBA) si esta disponible; si falla o no existe, traduce el
+; LBA a CHS y usa AH=02h.  Un fallo de AH=42h desactiva LBA para el resto
+; del arranque.
+; --------------------------------------------------------------------------
+read_sector:
         pusha
-        push    ds
         push    es
-        mov     [chs_cnt], al           ; AL = numero de sectores
-        mov     [chs_buf], bx           ; ES:BX = buffer destino
-        mov     ax, es
-        mov     [chs_seg], ax
+        mov     [dap+4], bx              ; offset destino
+        mov     [dap+6], es              ; segmento destino
+        mov     [rs_lba], ax
 
-        movzx   ebx, cl                 ; sector - 1
-        and     ebx, 0x3F
-        dec     ebx
+        cmp     byte [use_lba], 0
+        je      .chs
 
-        movzx   ecx, ch                 ; cilindro (8 bits bajos)
-        movzx   eax, cl                 ; cilindro (2 bits altos)
-        shr     eax, 6
-        and     eax, 3
-        shl     eax, 8
-        add     ecx, eax
-
-        movzx   eax, byte [max_head]    ; LBA = (C*(cabezas+1) + cabeza)*spt
-        inc     eax
-        imul    eax, ecx
-        movzx   ecx, byte [max_head]
-        add     eax, ecx
-        movzx   ecx, byte [spt]
-        imul    eax, ecx
-        add     eax, ebx
-
-        mov     ax, [chs_cnt]
-        mov     word [dap+2], ax        ; sectores
-        mov     ax, [chs_buf]
-        mov     word [dap+4], ax        ; offset destino
-        mov     ax, [chs_seg]
-        mov     word [dap+6], ax        ; segmento destino
-        mov     dword [dap+8], eax       ; LBA (dword bajo)
-        mov     dword [dap+12], 0       ; LBA (dword alto)
-
-        xor     ax, ax
-        mov     ds, ax                  ; DS:SI -> DAP
-        mov     es, ax
+        ; --- Intento por LBA (AH=42h) ---
+        mov     word [dap+2], 1
+        movzx   eax, word [rs_lba]
+        mov     [dap+8], eax
+        mov     dword [dap+12], 0
         mov     si, dap
-        mov     bx, dap
         mov     ah, 0x42
-        call    do_bios
+        mov     dl, [boot_drive]
+        int     0x13
+        jnc     .done
+        mov     byte [use_lba], 0        ; el BIOS no puede con LBA
 
+        ; --- Lectura por CHS (AH=02h) ---
+.chs:
+        movzx   eax, word [rs_lba]
+        xor     edx, edx
+        movzx   ecx, byte [max_head]
+        inc     ecx
+        movzx   ebx, byte [spt]
+        imul    ebx, ecx                 ; sectores por cilindro
+        div     ebx                      ; EAX = cilindro, EDX = resto
+        mov     [rs_cyl], eax
+        mov     eax, edx
+        xor     edx, edx
+        movzx   ebx, byte [spt]
+        div     ebx                      ; EAX = cabeza, EDX = sector-1
+        mov     [rs_head], al
+
+        mov     ebx, [rs_cyl]
+        mov     ch, bl                   ; cilindro (8 bits bajos)
+        shr     ebx, 8
+        and     bl, 3                    ; cilindro (2 bits altos)
+        shl     bl, 6
+        mov     cl, dl
+        inc     cl                       ; sector (1..spt)
+        or      cl, bl                   ; + bits altos del cilindro
+        mov     dh, [rs_head]
+        mov     dl, [boot_drive]
+        mov     bx, [dap+4]
+        mov     ax, 0x0201               ; AH=02h (leer), AL=1 sector
+        int     0x13
+.done:
         pop     es
-        pop     ds
         popa
-        retf    2
+        ret
 
 ; ==========================================================================
 ; Datos
@@ -252,13 +221,13 @@ boot_drive: db 0
 spt:        db 0                     ; sectores por pista
 max_head:   db 0                     ; cabezas maximas
 max_cyl:    db 0                     ; cilindros maximos (8 bits bajos)
+use_lba:    db 0                     ; 1 = usar AH=42h, 0 = usar CHS
 stage2_cnt: dw 0                     ; sectores de stage2 cargados
-chs_cnt:    dw 0                     ; AL en una lectura CHS
-chs_buf:    dw 0                     ; BX en una lectura CHS
-chs_seg:    dw 0                     ; ES en una lectura CHS
-orig13:     dw 0, 0                  ; vector original de INT 13h
+rs_lba:     dw 0                     ; LBA de la lectura en curso
+rs_cyl:     dd 0                     ; cilindro calculado
+rs_head:    db 0                     ; cabeza calculada
 
-msg_error:  db "AXOS: error de disco", 0
+msg_error:  db "AXOS ERR", 0
 
 ; Disk Address Packet: tamano, reservado, sectores, offset, segmento, LBA
 dap:        db 0x10, 0
@@ -267,6 +236,20 @@ dap:        db 0x10, 0
             dw 0
             dq 0
 
-; --- Relleno hasta 510 y firma MBR ----------------------------------------
-        times 510-($-$$) db 0
+; --------------------------------------------------------------------------
+; Tabla de particiones (necesaria para la emulacion de CD de El Torito).
+; SeaBIOS toma la geometria del disco emulado del CHS final de la particion
+; 1; con la tabla a cero el disco emulado no tiene geometria y las lecturas
+; CHS fallan.  La entrada cubre de sobra la imagen (hasta 15/15/63).
+; --------------------------------------------------------------------------
+        times 446-($-$$) db 0
+        db 0x00                          ; no activa
+        db 0x00, 0x01, 0x00              ; CHS inicio: cil 0, cab 0, sec 1
+        db 0x83                          ; tipo Linux
+        db 0x0F, 0x3F, 0x0F              ; CHS fin: cil 15, cab 15, sec 63
+        dd 1                             ; LBA de inicio
+        dd 15119                         ; numero de sectores
+        times 48 db 0                    ; entradas 2..4 vacias
+
+; --- Firma MBR ------------------------------------------------------------
         dw 0xAA55

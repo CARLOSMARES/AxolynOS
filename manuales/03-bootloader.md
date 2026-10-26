@@ -14,10 +14,13 @@ Es el sector que lee la BIOS. Su trabajo es minimo:
 
 1. Instalar las interrupciones (INT 13h, INT 10h) y guardar la geometria
    del disco con `INT 13h AH=08h`.
-2. Leer la geometria en CHS y preparar la LBA.
-3. Cargar `stage2` (LBA 1, `stage2_sectors` sectores) en `0x8000` con
-   `INT 13h AH=42h` (extensions LBA).
-4. Saltar a `0:0x8000`.
+2. Sondear las extensiones LBA con `INT 13h AH=41h` (CF=0 y BX=0xAA55).
+3. Cargar `stage2` (LBA 1, `stage2_sectors` sectores) en `0x8000`:
+   * si hay LBA, con `INT 13h AH=42h`;
+   * si no, traduciendo a CHS con `INT 13h AH=02h`.
+4. Pasar a `stage2` en `SI` el modo de lectura (1 = LBA, 0 = CHS) y la
+   geometria.
+5. Saltar a `0:0x8000`.
 
 Restricciones: debe ocupar **exactamente 512 bytes** y terminar con la
 firma `0x55 0xAA` en el offset `0x1FE`. El script de compilacion lo
@@ -42,6 +45,17 @@ Ocupa como mucho 63 sectores (LBA 1..63) y hace todo el trabajo real:
 | 7 | Construye las tablas de pagina de 4 niveles y activa el **modo largo** |
 | 8 | Rellena `AxBootInfo` en `0x1000` |
 | 9 | Salta a `e_entry` del kernel pasando en `RDI` la direccion de `AxBootInfo` |
+
+Las lecturas de kernel e initrd usan `read_sectors_staged`, que elige en
+cada momento entre `AH=42h` (LBA) y `AH=02h` (CHS). Es imprescindible en
+SeaBIOS cuando la ISO se arranca como CD-ROM: alli el "disco" emulado solo
+acepta las llamadas antiguas (`AH <= 0x16`). Si `AH=42h` falla, el cargador
+se pasa a CHS para el resto de la carga sin abortar.
+
+La tabla de particiones de `stage1` lleva una entrada valida (tipo `0x83`,
+CHS final 15/15/63, LBA 1..15119) porque SeaBIOS deduce la geometria del
+disco emulado a partir de ella. Sin esa entrada, las lecturas CHS de una
+ISO fallan.
 
 ### 2.1 Tablas de pagina
 
@@ -108,7 +122,37 @@ build/tools/mkdisk --stage1 build/stage1.bin --stage2 build/stage2.bin \
     --kernel build/axolyn.elf --initrd build/initrd.axfs --out build/axolynos.img
 ```
 
-## 4. El kernel recibe la informacion
+## 4. La ISO hibrida (BIOS + UEFI)
+
+`scripts/mkiso.sh` genera una unica ISO que arranca en las dos
+modalidades:
+
+* **BIOS/Legacy**: El Torito en modo "hard disk" sobre
+  `build/axolynos.img`. El BIOS emula un disco y ejecuta el MBR de la
+  imagen (stage1). Es la ruta descrita en las secciones anteriores.
+* **UEFI x86-64**: una imagen FAT con `EFI/BOOT/BOOTX64.EFI` (el cargador
+  UEFI), `EFI/AXOLYNOS/axolyn.elf` e `initrd.axfs`, publicada como
+  particion EFI (El Torito + tabla GPT).
+
+```
+build/AxolynOS.iso
+├── El Torito  -> build/axolynos.img       (BIOS)
+└── particion EFI
+    └── EFI/
+        ├── BOOT/BOOTX64.EFI
+        └── AXOLYNOS/{axolyn.elf, initrd.axfs}
+```
+
+El cargador UEFI usa los servicios de arranque para leer el kernel y el
+initrd desde la particion FAT y despues salta al kernel con la misma
+`AxBootInfo` que usa la ruta BIOS. El ELF del kernel se convierte a PE32+
+con `scripts/elf2efi.py` (sin definir `GNU_EFI_USE_MS_ABI`).
+
+```bash
+bash scripts/build.sh iso
+```
+
+## 5. El kernel recibe la informacion
 
 `AxBootInfo` (`apis/include/axos/abi.h`):
 
@@ -129,12 +173,19 @@ typedef struct {
 `_start` (en `Kernel/src/boot.S`) la copia a una variable del kernel y
 la pasa a `kmain()`.
 
-## 5. Probando el arranque
+## 6. Probando el arranque
 
 ```bash
 bash scripts/build.sh bootloader
 xxd build/stage1.bin | head -4          # debe verse la firma al final
 bash scripts/run.sh --headless          # log serie en la terminal
+
+# BIOS y UEFI desde la misma ISO
+bash scripts/build.sh iso
+bash scripts/run.sh --headless                       # BIOS
+qemu-system-x86_64 -machine q35 -bios /usr/share/qemu/OVMF.fd \
+    -cdrom build/AxolynOS.iso -boot d -m 512 \
+    -display none -serial stdio                      # UEFI
 ```
 
 Si el sistema no arranca, el log serie estara vacio: eso significa que

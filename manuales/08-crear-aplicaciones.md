@@ -4,7 +4,7 @@ Hay dos formas de escribir un programa para el sistema:
 
 | Tipo | Lenguaje | Como se ejecuta | Formato |
 |---|---|---|---|
-| **Nativa** | C++ (freestanding) | En ring 3, como proceso del kernel | ELF64 PIE |
+| **Nativa** | C++ (freestanding) | En ring 3, como proceso del kernel | `.axe` (cabecera + ELF64 PIE) |
 | **Axolyn** | Lenguaje Axolyn | En la maquina virtual del kernel | Bytecode `.axb` |
 
 Las dos conviven: una aplicacion nativa puede lanzar una aplicacion
@@ -38,10 +38,18 @@ Y compila:
 bash scripts/build.sh apps
 ```
 
-El resultado es `build/apps/mi_app.elf`. Para meterla en la imagen:
+El resultado es `build/apps/mi_app.elf` (ELF64 PIE) y
+`build/apps/mi_app.axe` (el mismo ejecutable empaquetado con su cabecera
+`AXE1`, tamano y CRC32). Para meterla en la imagen:
 
 ```bash
 bash scripts/build.sh initrd image
+```
+
+El shell ejecuta preferentemente el `.axe`:
+
+```
+run mi_app
 ```
 
 ### 1.2 Que hace el arranque de una aplicacion
@@ -114,7 +122,43 @@ RAX = valor de retorno (0 o -errno)
 ### 1.4 Listado de aplicaciones disponibles
 
 Las aplicaciones se guardan en el initrd (imagen AXFS en memoria) con la
-ruta `/apps/<nombre>.elf`. El kernel las busca ahi cuando se ejecutan.
+ruta `/apps/<nombre>.axe`. El kernel las busca ahi cuando se ejecutan.
+Tambien acepta `.elf` sueltos por compatibilidad.
+
+### 1.5 Formato `.axe` y biblioteca `.axl`
+
+Los dos formatos propios usan una cabecera fija y un CRC32 para detectar
+paquetes corruptos **antes** de cargarlos:
+
+```
+.axe  ax_axe_header (68 bytes)  +  ELF64 PIE
+      magic "AXE1", version, tipo, flags, tamano, crc32,
+      entry/load hints, nombre, arquitectura
+
+.axl  ax_axl_header (60 bytes)  +  archivo ar
+      magic "AXL1", version, nombre, tamano, crc32
+```
+
+Las definiciones estan en `Kernel/include/ax_pkg.h` y las herramientas
+en `scripts/tools/`:
+
+| Herramienta | Uso |
+|---|---|
+| `build/tools/mkaxe <elf> <axe> <nombre>` | empaqueta un ELF como `.axe` |
+| `build/tools/mkaxl <lib.a> <lib.axl> <nombre>` | empaqueta un `ar` como `.axl` |
+| `build/tools/axl2a <lib.axl> <lib.a>` | extrae el `ar` de un `.axl` |
+
+`build.sh apps` hace el ciclo completo: genera `build/lib/libaxos.axl`,
+extrae su contenido con `axl2a` y enlaza cada aplicacion **contra la
+biblioteca extraida**. Despues crea el `.axe` con `mkaxe`. Asi el formato
+se valida en cada compilacion.
+
+Para inspeccionar las bibliotecas desde el shell:
+
+```
+libs
+  lib/libaxos.axl  libaxos  v1  miembros=12  bytes=170092  crc=A67ED594
+```
 
 ---
 
@@ -199,14 +243,24 @@ El kernel incluye un interprete de ordenes minimo en
 ```
 help                 lista las ordenes
 apps                 lista las aplicaciones del initrd
-run <app> [args]     ejecuta una aplicacion nativa
-ax <app> [args]      ejecuta una aplicacion Axolyn
+libs                 lista las bibliotecas .axl (nombre, version, CRC)
+run <app> [args]     ejecuta una aplicacion nativa (.axe, .elf) y espera
+ax <app> [args]      ejecuta una aplicacion Axolyn (.axb)
 mods                 lista los modulos cargados
 mem                  informacion de memoria
+heap                 informacion del heap del kernel
 uptime               tiempo desde el arranque
 threads              hilos activos
+vm                   maquinas virtuales
+clear                limpia la pantalla
 reboot               reinicia
 ```
+
+`run` prueba primero `<app>.axe`, despues `<app>.elf` y por ultimo
+`<app>.axb`. Cuando la aplicacion es nativa, el shell espera su salida:
+`ax_proc_wait` libera la ranura de user mode y reapea el hilo, de modo que
+no se acumulan procesos zombis y la ranura 0 se reutiliza en cada
+ejecucion.
 
 ---
 

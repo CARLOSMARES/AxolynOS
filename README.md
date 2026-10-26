@@ -25,12 +25,39 @@ AxolynOS/
 ```
 
 Formatos de archivo:
-- `.axe` - Ejecutables AxolynOS
-- `.axl` - Librerías AxolynOS
-- `.axh` - Archivos de ayuda del sistema (sustituyen a `man`)
+- `.axe` - Ejecutables AxolynOS (cabecera `AXE1` + ELF64 PIE + CRC32)
+- `.axl` - Librerías AxolynOS (cabecera `AXL1` + archivo `ar` + CRC32)
+- `.axh` - Archivos de ayuda del sistema (se consultan con `man`)
+- `.axb` - Bytecode del lenguaje Axolyn
 - `.axmod` - Módulos del kernel
 - `.axfs` - Sistema de archivos initrd
+- `.elf` - ELF nativo suelto (compatibilidad con versiones anteriores)
+
+El formato `.axe` permite validar el ejecutable (tamaño y CRC32) antes de
+cargarlo y lleva el nombre y la arquitectura esperada. El formato `.axl`
+empaqueta un archivo `ar` completo: `build.sh` enlaza las aplicaciones
+contra la biblioteca **extraída del `.axl`**, de modo que el formato se
+prueba de extremo a extremo en cada compilación.
+
+## Arranque
+
+La misma ISO arranca en BIOS/Legacy y en UEFI x86-64:
+
+```bash
+bash scripts/build.sh iso
+
+# BIOS (SeaBIOS)
+qemu-system-x86_64 -cdrom build/AxolynOS.iso -boot d -m 512 \
+                   -display none -serial stdio
+
+# UEFI (OVMF)
+qemu-system-x86_64 -machine q35 -bios /usr/share/qemu/OVMF.fd \
+                   -cdrom build/AxolynOS.iso -boot d -m 512 \
+                   -display none -serial stdio
 ```
+
+La imagen cruda `build/axolynos.img` también arranca en BIOS con
+`-drive format=raw,file=build/axolynos.img`.
 
 ## Puesta en marcha rapida (Ubuntu en WSL2)
 
@@ -65,6 +92,14 @@ rapido copia el proyecto al sistema de ficheros de Linux
 
 ## Estado
 
-Experimental. El kernel arranca en QEMU, carga modulos, expone syscalls a
-aplicaciones nativas en ring 3 y ejecuta programas del lenguaje Axolyn
-dentro de la VM del kernel.
+Experimental. El kernel arranca en BIOS/Legacy y en UEFI, carga modulos,
+expone syscalls a aplicaciones nativas en ring 3 y ejecuta programas del
+lenguaje Axolyn dentro de la VM del kernel.
+
+Probado con QEMU (SeaBIOS y OVMF):
+
+* arranque BIOS desde `build/AxolynOS.iso` y desde `build/axolynos.img`;
+* arranque UEFI desde la misma ISO (FAT + `EFI/BOOT/BOOTX64.EFI`);
+* shell interactiva por consola serie;
+* `run hello`, `run sysinfo`, `run ls /` y `libs` con aplicaciones `.axe`;
+* reutilizacion de la ranura de user mode y liberacion de hilos al terminar.

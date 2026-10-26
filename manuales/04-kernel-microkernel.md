@@ -65,11 +65,11 @@ planificador.
 |---|---|---|
 | `0x08` | codigo del kernel | 0 |
 | `0x10` | datos del kernel | 0 |
-| `0x20` | codigo de usuario | 3 |
-| `0x24` | datos de usuario | 3 |
+| `0x18` | codigo de usuario | 3 |
+| `0x20` | datos de usuario | 3 |
 | `0x28` | TSS | 0 |
 
-Los selectores de usuario incluyen el RPL (0x23 y 0x2B). La TSS fija
+Los selectores de usuario incluyen el RPL (0x1B y 0x23). La TSS fija
 `rsp0`, la pila a la que se salta cuando una interrupcion llega desde
 user mode.
 
@@ -128,7 +128,7 @@ Estados: `FREE`, `READY`, `RUNNING`, `BLOCKED`, `ZOMBIE`.
 El cambio de contexto (`ax_context_switch`) guarda `r15..rbp` y el `rsp`
 en el contexto del hilo saliente y los restaura del contexto del
 entrante. Para volver a user mode, el marco de `iretq` preparado en la
-pila del kernel permite regresar al anillo 3 con `cs=0x23` y `ss=0x2B`.
+pila del kernel permite regresar al anillo 3 con `cs=0x1B` y `ss=0x23`.
 
 Cada cambio de contexto actualiza `ax_kernel_stack_top`, la variable que
 usa el trampolin de syscall para saber que pila del kernel usar.
@@ -143,7 +143,8 @@ int handler(uint64_t* args, uint64_t* ret);
 ```
 
 `args[0..5]` son `RDI, RSI, RDX, R10, R8, R9`; el valor de retorno se
-escribe en `*ret`. Un valor negativo significa error (`-errno`).
+escribe en `*ret`. Un valor negativo significa error (`AX_E*`, que ya
+estan definidos como negativos en `apis/include/axos/abi.h`).
 
 Los modulos pueden registrar syscalls adicionales en la misma tabla
 (numeros a partir del 100).
@@ -152,13 +153,22 @@ Los modulos pueden registrar syscalls adicionales en la misma tabla
 
 `ax_proc_spawn()`:
 
-1. Busca el binario en el initrd.
-2. Carga el ELF en una ranura de user mode (`0x400000 + ranura*16 MiB`),
-   mapeando paginas de 4 KiB y aplicando las relocaciones
-   `R_X86_64_RELATIVE`.
-3. Reserva una pila de 64 KiB para el proceso.
-4. Prepara la pila con `argc`/`argv` y crea el hilo con el punto de
-   entrada del ELF.
+1. Busca el binario en el initrd (`/apps/<nombre>.axe`, `.elf` o `.axb`).
+2. Si el fichero es un `.axe`, comprueba la cabecera `AXE1`, el tamano y
+   el CRC32 (`ax_pkg.h`) y se queda con el ELF64 que lleva dentro.
+3. Reserva una ranura de user mode de 16 MiB en
+   `AX_USER_VIRT_BASE (0x4000000) + ranura*16 MiB`; hay 8 ranuras y la
+   region completa (128 MiB) se reserva en el PMM.
+4. Carga el ELF en la ranura aplicando las relocaciones
+   `R_X86_64_RELATIVE` y prepara una pila de 1 MiB en la parte alta de la
+   ranura.
+5. Escribe `argc`/`argv` en la pila y crea el hilo de user mode con el
+   punto de entrada del ELF.
+
+`ax_proc_wait(pid)` bloquea al llamador (`ax_thread_sleep`) hasta que el
+hilo pasa a `ZOMBIE`, libera su ranura y reapea el hilo para que no queden
+procesos muertos ocupando la tabla. El shell usa este modo sincrono en
+`run`, de forma que la ranura 0 se reutiliza en ejecuciones sucesivas.
 
 El usuario no puede tocar el kernel: el rango alto de direcciones esta
 mapeado sin el bit de usuario, asi que cualquier acceso desde ring 3

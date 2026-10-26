@@ -38,11 +38,11 @@ static int axdemo_alloc(uint64_t* args, uint64_t* ret)
 {
     uint64_t size = args[0];
     if (size == 0 || size > (1u << 20)) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     g_buffer = ctx_alloc(size);
     if (g_buffer == 0) {
-        return -AX_ENOMEM;
+        return AX_ENOMEM;
     }
     *ret = (uint64_t)(uintptr_t)g_buffer;
     return 0;

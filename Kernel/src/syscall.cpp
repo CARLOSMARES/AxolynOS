@@ -156,7 +156,7 @@ static int sys_write(uint64_t* args, uint64_t* ret)
         return 0;
     }
     if (!ax_user_ptr_ok(buf, len)) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     int n = ax_proc_write(fd, (const void*)(uintptr_t)buf, len);
@@ -178,7 +178,7 @@ static int sys_read(uint64_t* args, uint64_t* ret)
         return 0;
     }
     if (!ax_user_ptr_ok(buf, len)) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     int n = ax_proc_read(fd, (void*)(uintptr_t)buf, len);
@@ -193,7 +193,7 @@ static int sys_open(uint64_t* args, uint64_t* ret)
 {
     char path[256];
     if (!ax_user_str(args[0], path, sizeof(path))) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     int fd = ax_proc_open(path, args[1]);
     if (fd < 0) {
@@ -226,10 +226,10 @@ static int sys_gets(uint64_t* args, uint64_t* ret)
     uint64_t max = args[1];
 
     if (max == 0) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     if (!ax_user_ptr_ok(buf, max)) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     int n = ax_proc_gets((char*)(uintptr_t)buf, max);
@@ -268,14 +268,14 @@ static int sys_spawn(uint64_t* args, uint64_t* ret)
 {
     char path[256];
     if (!ax_user_str(args[0], path, sizeof(path))) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     uint64_t argv_addr = args[1];
     int      argc      = (int)(int64_t)args[2];
 
     if (argc < 0 || argc > 64) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     /* El array argv vive en user mode: se copia al kernel antes de usarlo. */
@@ -285,11 +285,11 @@ static int sys_spawn(uint64_t* args, uint64_t* ret)
     for (int i = 0; i < argc; ++i) {
         uint64_t ptr = 0;
         if (!ax_user_ptr_ok(argv_addr + (uint64_t)i * 8, 8)) {
-            return -AX_EINVAL;
+            return AX_EINVAL;
         }
         ax_memcpy(&ptr, (const void*)(uintptr_t)(argv_addr + (uint64_t)i * 8), 8);
         if (!ax_user_str(ptr, names[i], sizeof(names[i]))) {
-            return -AX_EINVAL;
+            return AX_EINVAL;
         }
         argv[i] = names[i];
     }
@@ -366,7 +366,7 @@ static int sys_diskread(uint64_t* args, uint64_t* ret)
     uint64_t lba = args[0];
     void* buf = (void*)(uintptr_t)args[1];
     uint32_t cnt = (uint32_t)args[2];
-    if (!buf || cnt == 0) return -AX_EINVAL;
+    if (!buf || cnt == 0) return AX_EINVAL;
     int r = ax_disk_read(0, lba, cnt, buf);
     if (r < 0) return r;
     *ret = (uint64_t)(cnt * 512);
@@ -378,7 +378,7 @@ static int sys_diskwrite(uint64_t* args, uint64_t* ret)
     uint64_t lba = args[0];
     const void* buf = (const void*)(uintptr_t)args[1];
     uint32_t cnt = (uint32_t)args[2];
-    if (!buf || cnt == 0) return -AX_EINVAL;
+    if (!buf || cnt == 0) return AX_EINVAL;
     int r = ax_disk_write(0, lba, cnt, buf);
     if (r < 0) return r;
     *ret = (uint64_t)(cnt * 512);
@@ -396,7 +396,7 @@ static int sys_ipc_send(uint64_t* args, uint64_t* ret)
         return 0;
     }
     if (!ax_user_ptr_ok(buf, len)) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     int n = ax_ipc_send(port, (const void*)(uintptr_t)buf, len);
     if (n < 0) {
@@ -417,7 +417,7 @@ static int sys_ipc_recv(uint64_t* args, uint64_t* ret)
         return 0;
     }
     if (!ax_user_ptr_ok(buf, max)) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     int n = ax_ipc_recv(port, (void*)(uintptr_t)buf, max);
     if (n < 0) {
@@ -433,9 +433,37 @@ static int sys_modlist(uint64_t* args, uint64_t* ret)
     uint64_t max = args[1];
 
     if (!ax_user_ptr_ok(out, max * sizeof(AxModInfo))) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     int n = ax_module_fill_info((AxModInfo*)(uintptr_t)out, (uint32_t)max);
+    if (n < 0) {
+        return n;
+    }
+    *ret = (uint64_t)n;
+    return 0;
+}
+
+/* AX_SYS_THREADS: copia la tabla de hilos a user mode. */
+static int sys_threads(uint64_t* args, uint64_t* ret)
+{
+    uint64_t out = args[0];
+    uint64_t max = args[1];
+
+    if (!out) {
+        return AX_EINVAL;
+    }
+    if (max > AX_MAX_THREADS) {
+        max = AX_MAX_THREADS;
+    }
+    if (max == 0) {
+        *ret = 0;
+        return 0;
+    }
+    if (!ax_user_ptr_ok(out, max * sizeof(AxThreadInfo))) {
+        return AX_EINVAL;
+    }
+
+    int n = ax_thread_fill_info((AxThreadInfo*)(uintptr_t)out, (uint32_t)max);
     if (n < 0) {
         return n;
     }
@@ -447,7 +475,7 @@ static int sys_modload(uint64_t* args, uint64_t* ret)
 {
     char name[128];
     if (!ax_user_str(args[0], name, sizeof(name))) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     int r = ax_module_load(name);
     if (r < 0) {
@@ -467,7 +495,7 @@ static int sys_vmrun(uint64_t* args, uint64_t* ret)
 {
     char path[256];
     if (!ax_user_str(args[0], path, sizeof(path))) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     int pid = ax_vm_run(path, nullptr, 0);
     if (pid < 0) {
@@ -487,7 +515,7 @@ static int sys_vmstatus(uint64_t* args, uint64_t* ret)
 {
     uint64_t out = args[0];
     if (!ax_user_ptr_ok(out, sizeof(AxVmInfo))) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     int n = ax_vm_fill_info((AxVmInfo*)(uintptr_t)out, 1);
     if (n < 0) {
@@ -501,12 +529,12 @@ static int sys_meminfo(uint64_t* args, uint64_t* ret)
 {
     uint64_t out = args[0];
     if (!ax_user_ptr_ok(out, sizeof(AxMemInfo))) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     AxMemInfo* info = (AxMemInfo*)(uintptr_t)out;
     ax_memset(info, 0, sizeof(*info));
     if (ax_pmm_fill_info(info) != 0) {
-        return -AX_EIO;
+        return AX_EIO;
     }
     info->low_mapped = ax_vmm_low_mapped_bytes();
     (void)ret;
@@ -517,10 +545,10 @@ static int sys_heapinfo(uint64_t* args, uint64_t* ret)
 {
     uint64_t out = args[0];
     if (!ax_user_ptr_ok(out, sizeof(AxHeapInfo))) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     if (ax_heap_fill_info((AxHeapInfo*)(uintptr_t)out) != 0) {
-        return -AX_EIO;
+        return AX_EIO;
     }
     (void)ret;
     return 0;
@@ -530,7 +558,7 @@ static int sys_sysinfo(uint64_t* args, uint64_t* ret)
 {
     uint64_t out = args[0];
     if (!ax_user_ptr_ok(out, sizeof(AxSysInfo))) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     AxSysInfo* info = (AxSysInfo*)(uintptr_t)out;
     ax_memset(info, 0, sizeof(*info));
@@ -559,12 +587,12 @@ static int sys_reboot(uint64_t* args, uint64_t* ret)
 int ax_syscall_register(uint64_t nr, ax_syscall_handler handler)
 {
     if (!handler) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     if (nr < AX_SYSCALL_TABLE_SIZE) {
         if (g_handlers[nr]) {
-            return -AX_EBUSY;
+            return AX_EBUSY;
         }
         g_handlers[nr] = handler;
         return 0;
@@ -573,12 +601,12 @@ int ax_syscall_register(uint64_t nr, ax_syscall_handler handler)
         nr < AX_MODULE_SYSCALL_BASE + AX_MODULE_SYSCALL_MAX) {
         uint64_t idx = nr - AX_MODULE_SYSCALL_BASE;
         if (g_module_handlers[idx]) {
-            return -AX_EBUSY;
+            return AX_EBUSY;
         }
         g_module_handlers[idx] = handler;
         return 0;
     }
-    return -AX_EINVAL;
+    return AX_EINVAL;
 }
 
 int ax_syscall_dispatch(uint64_t nr, uint64_t* args, uint64_t* ret)
@@ -599,7 +627,7 @@ int ax_syscall_dispatch(uint64_t nr, uint64_t* args, uint64_t* ret)
     }
 
     if (!handler) {
-        return -AX_ENOSYS;
+        return AX_ENOSYS;
     }
     return handler(args, ret);
 }
@@ -640,6 +668,7 @@ void ax_syscall_init(void)
     ax_syscall_register(AX_SYS_IPC_SEND,  sys_ipc_send);
     ax_syscall_register(AX_SYS_IPC_RECV,  sys_ipc_recv);
     ax_syscall_register(AX_SYS_MODLIST,   sys_modlist);
+    ax_syscall_register(AX_SYS_THREADS,   sys_threads);
     ax_syscall_register(AX_SYS_MODLOAD,   sys_modload);
     ax_syscall_register(AX_SYS_MODUNLOAD, sys_modunload);
     ax_syscall_register(AX_SYS_VMRUN,     sys_vmrun);
@@ -668,7 +697,7 @@ extern "C" uint64_t ax_syscall_entry(uint64_t nr, uint64_t* args)
     uint64_t ret = 0;
 
     if (!args) {
-        return (uint64_t)(int64_t)-AX_EINVAL;
+        return (uint64_t)(int64_t)AX_EINVAL;
     }
 
     g_call_count++;

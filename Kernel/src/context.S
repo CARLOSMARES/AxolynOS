@@ -85,6 +85,14 @@ ax_context_switch:
     .type  ax_thread_trampoline, @function
 ax_thread_trampoline:
     subq  $8, %rsp
+    /*
+     * El hilo nuevo arranca dentro de ax_context_switch, que deja IF=0
+     * (el cambio de contexto se hace con las interrupciones desactivadas).
+     * Hay que reactivarlas: si no, el primer hlt del hilo (por ejemplo el
+     * de la shell esperando entrada) se quedaria dormido para siempre
+     * porque el temporizador nunca volveria a despertarlo.
+     */
+    sti
     call  ax_thread_kernel_entry
     /* ax_thread_kernel_entry no retorna (el hilo se retira).  Si algo
        falla, nos quedamos parados aqui en lugar de continuar con un

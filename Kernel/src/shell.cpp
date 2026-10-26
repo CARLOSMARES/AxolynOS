@@ -8,6 +8,7 @@
  * Ordenes:
  *   help              esta ayuda
  *   apps              lista las aplicaciones del initrd
+ *   libs              lista las bibliotecas .axl de /lib
  *   run <app> [args]  ejecuta una aplicacion nativa (ring 3)
  *   ax <app> [args]   ejecuta una aplicacion Axolyn (bytecode)
  *   mods              lista los modulos cargados
@@ -25,6 +26,8 @@
 #include "ax_memory.h"
 #include "ax_module.h"
 #include "ax_axfs.h"
+#include "ax_keyboard.h"
+#include "ax_pkg.h"
 
 #define AX_SHELL_MAX_LINE 256
 #define AX_SHELL_MAX_ARGS  8
@@ -43,7 +46,7 @@ static void shell_memcpy(char* dst, const char* src, size_t len)
 }
 
 /* ------------------------------------------------------------------ */
-/* Entrada por el puerto serie (lectura por sondeo)                    */
+/* Entrada: teclado PS/2 (IRQ1) y puerto serie COM1                    */
 /* ------------------------------------------------------------------ */
 static inline uint8_t inb(uint16_t port)
 {
@@ -57,10 +60,23 @@ static bool serial_ready(void)
     return (inb(AX_SERIAL_PORT + 5) & 0x01) != 0;
 }
 
-static char serial_getc(void)
+static bool input_ready(void)
 {
-    while (!serial_ready()) {
+    return ax_keyboard_has_char() || serial_ready();
+}
+
+/*
+ * Espera a que haya entrada por cualquiera de las dos fuentes.  Se usa HLT
+ * para no consumir CPU: el tick del temporizador despierta el hilo y vuelve
+ * a comprobar los buffers.
+ */
+static char input_getc(void)
+{
+    while (!input_ready()) {
         asm volatile("hlt");
+    }
+    if (ax_keyboard_has_char()) {
+        return ax_keyboard_getc();
     }
     return (char)inb(AX_SERIAL_PORT);
 }
@@ -122,7 +138,8 @@ static void cmd_help(void)
     ax_puts("  help              esta ayuda\n");
     ax_puts("  man <tema>        muestra ayuda desde .axh (/help/<tema>.axh)\n");
     ax_puts("  apps              aplicaciones del initrd\n");
-    ax_puts("  run <app> [args]  ejecuta una aplicacion nativa (.elf/.axe)\n");
+    ax_puts("  libs              bibliotecas .axl instaladas (/lib)\n");
+    ax_puts("  run <app> [args]  ejecuta una aplicacion nativa (.axe/.elf)\n");
     ax_puts("  ax <app> [args]   ejecuta una aplicacion Axolyn (.axb)\n");
     ax_puts("  mods              modulos cargados\n");
     ax_puts("  mem               informacion de memoria\n");
@@ -144,6 +161,100 @@ static void cmd_apps(void)
     }
     ax_puts("ficheros del initrd:\n");
     ax_puts(buffer);
+}
+
+/* Devuelve true si "s" termina en "suffix". */
+static bool shell_suffix(const char* s, const char* suffix)
+{
+    size_t ls = 0, lf = 0;
+    while (s[ls]) ls++;
+    while (suffix[lf]) lf++;
+    if (lf > ls) {
+        return false;
+    }
+    for (size_t i = 0; i < lf; ++i) {
+        if (s[ls - lf + i] != suffix[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* Lista las bibliotecas .axl instaladas en /lib (cabecera ax_axl_header). */
+static void cmd_libs(void)
+{
+    uint32_t total = ax_vfs_count();
+    bool found = false;
+
+    for (uint32_t i = 0; i < total; ++i) {
+        const char* name = ax_vfs_name(i);
+        if (!name) {
+            continue;
+        }
+        if (name[0] != 'l' || name[1] != 'i' || name[2] != 'b' || name[3] != '/') {
+            continue;
+        }
+        if (!shell_suffix(name, ".axl")) {
+            continue;
+        }
+
+        uint64_t size = 0;
+        const uint8_t* data = (const uint8_t*)ax_vfs_read(name, &size);
+        if (!data || size < sizeof(ax_axl_header)) {
+            ax_puts("  ");
+            ax_puts(name);
+            ax_puts("  (fichero demasiado pequeno)\n");
+            continue;
+        }
+
+        /* Copia byte a byte: el initrd no garantiza alineacion. */
+        ax_axl_header hdr;
+        uint8_t* dst = (uint8_t*)&hdr;
+        for (uint32_t k = 0; k < sizeof(hdr); ++k) {
+            dst[k] = data[k];
+        }
+
+        char logical[sizeof(hdr.name) + 1];
+        for (size_t k = 0; k < sizeof(hdr.name); ++k) {
+            logical[k] = hdr.name[k];
+        }
+        logical[sizeof(hdr.name)] = '\0';
+
+        ax_puts("  ");
+        ax_puts(name);
+        if (hdr.magic != AX_PKG_MAGIC_AXL) {
+            ax_puts("  (firma .axl incorrecta)\n");
+            continue;
+        }
+        if (hdr.version != AX_PKG_VERSION ||
+            hdr.kind != AX_PKG_KIND_AR ||
+            (uint64_t)hdr.payload_size > size - sizeof(hdr)) {
+            ax_puts("  (cabecera .axl no soportada)\n");
+            continue;
+        }
+
+        uint32_t crc = ax_pkg_crc32(data + sizeof(hdr), hdr.payload_size);
+
+        ax_puts("  ");
+        ax_puts(logical);
+        ax_puts("  v");
+        ax_putdec((int64_t)hdr.version);
+        ax_puts("  miembros=");
+        ax_putdec((int64_t)hdr.members);
+        ax_puts("  bytes=");
+        ax_putdec((int64_t)hdr.payload_size);
+        ax_puts("  crc=");
+        ax_puthex((uint64_t)hdr.payload_crc32);
+        if (crc != hdr.payload_crc32) {
+            ax_puts("  (CRC INCORRECTO)");
+        }
+        ax_puts("\n");
+        found = true;
+    }
+
+    if (!found) {
+        ax_puts("no hay bibliotecas .axl en /lib\n");
+    }
 }
 
 static void cmd_mods(void)
@@ -274,7 +385,7 @@ static void cmd_run(char** args, size_t count)
         path[j] = '\0';
     }
 
-    /* Si no lleva extension se proba .elf y despues .axb */
+    /* Si no lleva extension se prueba .axe, despues .elf y por ultimo .axb */
     bool has_ext = false;
     for (size_t i = 0; path[i]; ++i) {
         if (path[i] == '.') {
@@ -290,6 +401,7 @@ static void cmd_run(char** args, size_t count)
     extra[extra_count] = 0;
 
     int pid;
+    bool native = false;
     if (!has_ext) {
         char candidate[144];
         size_t len = 0;
@@ -297,14 +409,21 @@ static void cmd_run(char** args, size_t count)
             len++;
         }
         shell_memcpy(candidate, path, len);
-        shell_memcpy(candidate + len, ".elf", 5);
+        shell_memcpy(candidate + len, ".axe", 5);
         pid = ax_proc_spawn(candidate, extra, (int)extra_count);
+        native = (pid >= 0);
+        if (pid < 0) {
+            shell_memcpy(candidate + len, ".elf", 5);
+            pid = ax_proc_spawn(candidate, extra, (int)extra_count);
+            native = (pid >= 0);
+        }
         if (pid < 0) {
             shell_memcpy(candidate + len, ".axb", 5);
             pid = ax_vm_run(candidate, extra, (int)extra_count);
         }
     } else {
         pid = ax_proc_spawn(path, extra, (int)extra_count);
+        native = (pid >= 0);
     }
 
     if (pid < 0) {
@@ -319,6 +438,13 @@ static void cmd_run(char** args, size_t count)
     ax_puts("lanzado pid=");
     ax_putdec((int64_t)pid);
     ax_puts("\n");
+
+    /* La shell espera al proceso: asi se libera su ranura de user mode y el
+     * hilo no queda como zombi.  Mientras espera, el planificador ejecuta la
+     * aplicacion. */
+    if (native) {
+        (void)ax_proc_wait((uint64_t)pid);
+    }
 }
 
 static void cmd_ax(char** args, size_t count)
@@ -427,6 +553,7 @@ static void shell_execute(char* line)
         }
     }
     else if (shell_streq(cmd, "apps"))   cmd_apps();
+    else if (shell_streq(cmd, "libs"))   cmd_libs();
     else if (shell_streq(cmd, "mods"))   cmd_mods();
     else if (shell_streq(cmd, "mem"))    cmd_mem();
     else if (shell_streq(cmd, "heap"))   cmd_heap();
@@ -454,7 +581,7 @@ void ax_shell_thread(void* arg)
     shell_prompt();
 
     for (;;) {
-        char c = serial_getc();
+        char c = input_getc();
 
         if (c == '\r' || c == '\n') {
             g_line[index] = '\0';

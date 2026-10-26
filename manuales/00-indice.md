@@ -34,6 +34,7 @@ Kernel/src/syscall.cpp    despacho de llamadas al sistema
 Kernel/src/ipc.cpp        puertos de mensajes
 Kernel/src/elf.cpp        cargador ELF64 para user mode
 Kernel/src/proc.cpp       procesos de user mode
+Kernel/include/ax_pkg.h   formatos .axe/.axl y CRC32
 Kernel/src/module.cpp     carga y descarga de modulos
 Kernel/src/vmhost.cpp     integracion de la VM de bytecode
 Kernel/vm/axvm.cpp        la maquina virtual (tambien se usa en el host)
@@ -42,6 +43,9 @@ Kernel/bootloader/        stage1.asm y stage2.asm (NASM)
 apis/                     libaxos: API de usuario
 apps/                     aplicaciones nativas (C++) y Axolyn (bytecode)
 compiladores/axc/         el compilador del lenguaje Axolyn
+scripts/tools/mkaxe.cpp   empaquetador de ejecutables .axe
+scripts/tools/mkaxl.cpp   empaquetador de bibliotecas .axl
+scripts/tools/axl2a.cpp   extractor del archivo ar de un .axl
 scripts/                  instalacion, compilacion, ejecucion y pruebas
 ```
 

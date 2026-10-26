@@ -26,6 +26,7 @@
 #include "ax_kernel.h"
 #include "ax_axfs.h"
 #include "ax_elf.h"
+#include "ax_pkg.h"
 #include "ax_sched.h"
 #include "ax_memory.h"
 #include "ax_console.h"
@@ -36,6 +37,7 @@
 typedef struct {
     bool     used;
     uint32_t slot;
+    uint64_t pid;
     uint64_t base;
     uint64_t entry;
     uint64_t stack_top;
@@ -115,6 +117,7 @@ static int ax_slot_alloc(void)
         if (!g_slots[i].used) {
             g_slots[i].used = true;
             g_slots[i].slot = i;
+            g_slots[i].pid = 0;
             g_slots[i].base = AX_USER_VIRT_BASE + (uint64_t)i * AX_USER_SLOT_SIZE;
             g_slots[i].entry = 0;
             g_slots[i].stack_top = g_slots[i].base + AX_USER_STACK_OFFSET;
@@ -131,6 +134,7 @@ static void ax_slot_release(int index)
         return;
     }
     g_slots[index].used = false;
+    g_slots[index].pid = 0;
     g_slots[index].entry = 0;
     g_slots[index].path[0] = '\0';
 }
@@ -221,22 +225,59 @@ static uint64_t ax_proc_setup_stack(uint64_t stack_top, const char* path,
 int ax_proc_spawn(const char* path, const char* const* argv, int argc)
 {
     if (!path || !path[0]) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     uint64_t size = 0;
     const void* image = ax_vfs_read(path, &size);
     if (!image || size == 0) {
-        return -AX_ENOENT;
+        return AX_ENOENT;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Desenvolver el paquete .axe (cabecera + ELF64), si lo es.           */
+    /* ------------------------------------------------------------------ */
+    const uint8_t* payload = (const uint8_t*)image;
+    uint64_t payload_size = size;
+    if (size >= sizeof(ax_axe_header)) {
+        ax_axe_header hdr;
+        const uint8_t* p = (const uint8_t*)image;
+        /* copia byte a byte: el fichero del initrd no tiene por que estar  */
+        /* alineado a 4 bytes                                              */
+        uint8_t* dst = (uint8_t*)&hdr;
+        for (uint32_t i = 0; i < sizeof(hdr); ++i) dst[i] = p[i];
+
+        if (hdr.magic == AX_PKG_MAGIC_AXE) {
+            if (hdr.version != AX_PKG_VERSION) {
+                ax_printf("[proc] %s: version .axe no soportada\n", path);
+                return AX_EINVAL;
+            }
+            if (hdr.kind != AX_PKG_KIND_ELF64) {
+                ax_printf("[proc] %s: tipo de .axe no soportado\n", path);
+                return AX_EINVAL;
+            }
+            if ((uint64_t)hdr.payload_size > size - sizeof(hdr)) {
+                ax_printf("[proc] %s: .axe truncado\n", path);
+                return AX_EINVAL;
+            }
+            const uint8_t* data = p + sizeof(hdr);
+            uint32_t crc = ax_pkg_crc32(data, hdr.payload_size);
+            if (crc != hdr.payload_crc32) {
+                ax_printf("[proc] %s: CRC .axe incorrecto\n", path);
+                return AX_EINVAL;
+            }
+            payload = data;
+            payload_size = hdr.payload_size;
+        }
     }
 
     int slot = ax_slot_alloc();
     if (slot < 0) {
-        return -AX_ENOSPC;
+        return AX_ENOSPC;
     }
 
     uint64_t entry = 0;
-    int rc = ax_elf_load_user(image, size, g_slots[slot].base, &entry);
+    int rc = ax_elf_load_user(payload, payload_size, g_slots[slot].base, &entry);
     if (rc != 0) {
         ax_slot_release(slot);
         return rc;
@@ -245,7 +286,7 @@ int ax_proc_spawn(const char* path, const char* const* argv, int argc)
     uint64_t rsp = 0;
     if (ax_proc_setup_stack(g_slots[slot].stack_top, path, argv, argc, &rsp) == 0) {
         ax_slot_release(slot);
-        return -AX_ENOMEM;
+        return AX_ENOMEM;
     }
 
     char name[AX_THREAD_NAME_LEN];
@@ -254,10 +295,11 @@ int ax_proc_spawn(const char* path, const char* const* argv, int argc)
     AxThread* th = ax_thread_create_user(name, entry, rsp);
     if (!th) {
         ax_slot_release(slot);
-        return -AX_ENOMEM;
+        return AX_ENOMEM;
     }
 
     g_slots[slot].entry = entry;
+    g_slots[slot].pid = th->id;
     ax_strlcpy(g_slots[slot].path, path, sizeof(g_slots[slot].path));
 
     ax_printf("[proc] '%s' launched (pid %u, ranura %u)\n",
@@ -271,10 +313,20 @@ int ax_proc_wait(uint64_t pid)
     for (;;) {
         AxThread* t = ax_thread_by_id(pid);
         if (!t) {
-            return -AX_EINVAL;
+            return AX_EINVAL;
         }
         if (t->state == AX_THREAD_ZOMBIE) {
-            return t->exit_code;
+            int code = t->exit_code;
+
+            /* La ranura de user mode queda libre en cuanto el proceso muere. */
+            for (uint32_t i = 0; i < AX_USER_MAX_SLOTS; ++i) {
+                if (g_slots[i].used && g_slots[i].pid == pid) {
+                    ax_slot_release((int)i);
+                    break;
+                }
+            }
+            ax_thread_reap(t);
+            return code;
         }
         /* El proceso sigue vivo: se cede el CPU y se vuelve a mirar. */
         ax_thread_sleep(5);
@@ -285,10 +337,10 @@ int ax_proc_exit_code(uint64_t pid)
 {
     AxThread* t = ax_thread_by_id(pid);
     if (!t) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     if (t->state != AX_THREAD_ZOMBIE) {
-        return -AX_EAGAIN;
+        return AX_EAGAIN;
     }
     return t->exit_code;
 }
@@ -297,12 +349,12 @@ int ax_proc_kill(uint64_t pid)
 {
     AxThread* t = ax_thread_by_id(pid);
     if (!t) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     if (t->state == AX_THREAD_ZOMBIE) {
         return 0;
     }
-    t->exit_code = -AX_EINTR;
+    t->exit_code = AX_EINTR;
     ax_thread_wakeup(t);
     /* El hilo muere la proxima vez que se planifique: se marca como
        terminado y se le quita de la cola de listos. */
@@ -327,18 +379,18 @@ int ax_proc_fill_info(AxThreadInfo* out, uint32_t max)
 int ax_proc_open(const char* path, uint64_t flags)
 {
     if (!path || !path[0]) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     uint64_t size = 0;
     const void* data = ax_vfs_read(path, &size);
     if (!data) {
-        return -AX_ENOENT;
+        return AX_ENOENT;
     }
 
     /* El AXFS es de solo lectura. */
     if (flags & (AX_O_WRONLY | AX_O_RDWR | AX_O_CREAT | AX_O_TRUNC | AX_O_APPEND)) {
-        return -AX_EACCES;
+        return AX_EACCES;
     }
 
     for (int i = 3; i < AX_PROC_MAX_FD; ++i) {
@@ -351,16 +403,16 @@ int ax_proc_open(const char* path, uint64_t flags)
             return i;
         }
     }
-    return -AX_ENOSPC;
+    return AX_ENOSPC;
 }
 
 int ax_proc_read(int fd, void* buf, uint64_t len)
 {
     if (fd < 0 || fd >= AX_PROC_MAX_FD) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     if (!buf && len > 0) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     if (fd == 0) {
@@ -374,12 +426,12 @@ int ax_proc_read(int fd, void* buf, uint64_t len)
     }
 
     if (fd == 1 || fd == 2) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     ax_proc_fd* f = &g_fds[fd];
     if (!f->used) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     if (f->pos >= f->size) {
         return 0;
@@ -395,10 +447,10 @@ int ax_proc_read(int fd, void* buf, uint64_t len)
 int ax_proc_write(int fd, const void* buf, uint64_t len)
 {
     if (fd < 0 || fd >= AX_PROC_MAX_FD) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     if (!buf && len > 0) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     if (fd == 1 || fd == 2) {
@@ -410,23 +462,23 @@ int ax_proc_write(int fd, const void* buf, uint64_t len)
     }
 
     if (fd == 0) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     ax_proc_fd* f = &g_fds[fd];
     if (!f->used) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
-    return -AX_EACCES;   /* el AXFS es de solo lectura */
+    return AX_EACCES;   /* el AXFS es de solo lectura */
 }
 
 int ax_proc_close(int fd)
 {
     if (fd < 3 || fd >= AX_PROC_MAX_FD) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     if (!g_fds[fd].used) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     ax_memset(&g_fds[fd], 0, sizeof(g_fds[fd]));
     return 0;
@@ -435,11 +487,11 @@ int ax_proc_close(int fd)
 int ax_proc_lseek(int fd, int64_t offset, int whence)
 {
     if (fd < 3 || fd >= AX_PROC_MAX_FD) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     ax_proc_fd* f = &g_fds[fd];
     if (!f->used) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     int64_t base = 0;
@@ -447,12 +499,12 @@ int ax_proc_lseek(int fd, int64_t offset, int whence)
         case AX_SEEK_SET: base = 0; break;
         case AX_SEEK_CUR: base = (int64_t)f->pos; break;
         case AX_SEEK_END: base = (int64_t)f->size; break;
-        default: return -AX_EINVAL;
+        default: return AX_EINVAL;
     }
 
     int64_t np = base + offset;
     if (np < 0) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
     f->pos = (uint64_t)np;
     return (int)np;
@@ -464,7 +516,7 @@ int ax_proc_lseek(int fd, int64_t offset, int whence)
 int ax_proc_gets(char* buf, uint64_t max)
 {
     if (!buf || max < 2) {
-        return -AX_EINVAL;
+        return AX_EINVAL;
     }
 
     uint64_t n = 0;

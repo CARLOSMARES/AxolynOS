@@ -188,7 +188,10 @@ void ax_pmm_reserve(uint64_t phys, uint64_t size)
         if (frame >= AX_PMM_MAX_FRAMES) {
             break;
         }
-        ax_pmm_bit_set(frame);
+        if (!ax_pmm_bit_test(frame)) {
+            ax_pmm_bit_set(frame);
+            ++ax_pmm_used_frames;
+        }
     }
 }
 

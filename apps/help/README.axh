@@ -1,6 +1,6 @@
 AYUDA AXOLYNOS (.axh)
 
-Los archivos de ayuda del sistema ahora usan la extension .axh.
+Los archivos de ayuda del sistema usan la extension .axh.
 Se encuentran en /help/ dentro del initrd y se pueden consultar con:
 
   man <tema>
@@ -8,7 +8,25 @@ Se encuentran en /help/ dentro del initrd y se pueden consultar con:
 Ejemplo:
   man help
   man shell
-  man syscalls
 
-Los ejecutables ahora pueden usar la extension .axe
-Las librerias pueden usar la extension .axl
+Formatos del sistema
+--------------------
+
+  .axe   Ejecutable AxolynOS.
+         Cabecera ax_axe_header (magic AXE1, version, tipo, tamano,
+         CRC32, punto de entrada y nombre) seguida de un ELF64 PIE.
+         Herramienta: build/tools/mkaxe <elf> <axe> <nombre>
+
+  .axl   Biblioteca AxolynOS.
+         Cabecera ax_axl_header (magic AXL1, version, nombre, tamano
+         y CRC32) seguida de un archivo ar.
+         Herramientas: build/tools/mkaxl y build/tools/axl2a
+         (extrae el archivo ar para enlazar aplicaciones contra el).
+
+  .axh   Ayuda del sistema (este mismo formato).
+  .axb   Bytecode del lenguaje Axolyn.
+  .axmod Modulo del kernel.
+  .axfs  Imagen del initramfs.
+
+El CRC32 de .axe y .axl se comprueba en el kernel antes de cargar el
+fichero (Kernel/include/ax_pkg.h).

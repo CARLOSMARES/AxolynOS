@@ -89,10 +89,10 @@
 /*   +0x0000000  imagen de la aplicacion (ELF)                         */
 /*   ...                                                                */
 /*   +0xF00000   pila de user mode (1 MiB, crece hacia abajo)         */
-/*   +0x100000   fin de la ranura                                      */
+/*   +0x1000000  fin de la ranura                                     */
 /* ------------------------------------------------------------------ */
 #define AX_USER_VIRT_BASE       0x0000000004000000ull   /* 64 MiB        */
-#define AX_USER_SLOT_SIZE       0x0000000000100000ull   /* 16 MiB        */
+#define AX_USER_SLOT_SIZE       0x0000000001000000ull   /* 16 MiB        */
 #define AX_USER_MAX_SLOTS       8
 #define AX_USER_STACK_SIZE      0x0000000000100000ull   /* 1 MiB         */
 
@@ -107,13 +107,13 @@
 /* ------------------------------------------------------------------ */
 #define AX_GDT_KERNEL_CODE      0x08u
 #define AX_GDT_KERNEL_DATA      0x10u
-#define AX_GDT_USER_CODE        0x20u
-#define AX_GDT_USER_DATA        0x24u
+#define AX_GDT_USER_CODE        0x18u
+#define AX_GDT_USER_DATA        0x20u
 #define AX_GDT_TSS              0x28u
 #define AX_SELECTOR_KERNEL_CODE 0x08u
 #define AX_SELECTOR_KERNEL_DATA 0x10u
-#define AX_SELECTOR_USER_CODE   0x23u
-#define AX_SELECTOR_USER_DATA   0x2Bu
+#define AX_SELECTOR_USER_CODE   0x1Bu
+#define AX_SELECTOR_USER_DATA   0x23u
 
 /* ------------------------------------------------------------------ */
 /* Syscalls                                                            */
@@ -126,14 +126,21 @@
 /* ------------------------------------------------------------------ */
 #define AX_MAX_THREADS          64
 #define AX_THREAD_NAME_LEN      32
-#define AX_KERNEL_STACK_SIZE    0x0000000000100000ull   /* 64 KiB        */
+#define AX_KERNEL_STACK_SIZE    0x0000000000100000ull   /* 1 MiB         */
 #define AX_TIMER_FREQ_HZ        100
 
 /* ------------------------------------------------------------------ */
 /* IPC                                                                */
 /* ------------------------------------------------------------------ */
+/*
+ * Los puertos y sus colas son estaticos (.bss).  Hay que mantener el tamano
+ * acotado: la imagen del kernel tiene reservados 8 MiB (0x200000-0xA00000)
+ * y justo despues empiezan las tablas de pagina en AX_PTABLES_PHYS.  Con
+ * 32 puertos x 8 mensajes x 4 KiB la tabla ocupa ~1 MiB y la imagen queda
+ * muy por debajo del limite.
+ */
 #define AX_IPC_MAX_PORTS        32
-#define AX_IPC_MAX_MSG          64
+#define AX_IPC_MAX_MSG          8
 #define AX_IPC_MSG_MAX          4096
 
 /* ------------------------------------------------------------------ */

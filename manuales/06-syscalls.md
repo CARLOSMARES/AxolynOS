@@ -48,8 +48,9 @@ restaura.
 ### Valores de retorno
 
 * `>= 0`: exito (el significado depende de la llamada).
-* `< 0`: error. El valor es el **negativo** del codigo de error
-  (`-AX_ENOENT`, `-AX_EINVAL`, ...).
+* `< 0`: error. El valor es uno de los codigos `AX_E*` de
+  `apis/include/axos/abi.h`, que ya estan definidos como negativos
+  (`AX_ENOENT = -1`, `AX_EINVAL = -3`, ...).
 
 ## 2. Tabla completa
 
