@@ -46,3 +46,18 @@ long ax_proc_yield(void)
 {
     return ax_syscall0(AX_SYS_YIELD);
 }
+
+long ax_proc_signal(long sig, unsigned long handler)
+{
+    return ax_syscall2(AX_SYS_SIGNAL, sig, (long)handler);
+}
+
+long ax_proc_sigsend(long pid, long sig)
+{
+    return ax_syscall2(AX_SYS_SIGSEND, pid, sig);
+}
+
+long ax_proc_sigpending(long sig)
+{
+    return ax_syscall1(AX_SYS_SIGPENDING, sig);
+}

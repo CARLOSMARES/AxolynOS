@@ -30,6 +30,8 @@
 #include "ax_sched.h"
 #include "ax_memory.h"
 #include "ax_console.h"
+#include "ax_gc.h"
+#include "ax_signal.h"
 
 /* ------------------------------------------------------------------ */
 /* Ranuras de user mode                                                */
@@ -53,6 +55,7 @@ static ax_proc_slot g_slots[AX_USER_MAX_SLOTS];
 
 typedef struct {
     bool         used;
+    uint64_t     owner;     /* pid que abrio el descriptor (0 = kernel) */
     uint64_t     flags;
     uint64_t     pos;
     const uint8_t* data;    /* contenido del fichero (AXFS, solo lectura) */
@@ -273,6 +276,11 @@ int ax_proc_spawn(const char* path, const char* const* argv, int argc)
 
     int slot = ax_slot_alloc();
     if (slot < 0) {
+        /* No quedan ranuras: puede haber procesos zombis sin recoger. */
+        ax_gc_collect();
+        slot = ax_slot_alloc();
+    }
+    if (slot < 0) {
         return AX_ENOSPC;
     }
 
@@ -326,6 +334,7 @@ int ax_proc_wait(uint64_t pid)
                 }
             }
             ax_thread_reap(t);
+            ax_proc_close_owned(pid);
             return code;
         }
         /* El proceso sigue vivo: se cede el CPU y se vuelve a mirar. */
@@ -396,6 +405,7 @@ int ax_proc_open(const char* path, uint64_t flags)
     for (int i = 3; i < AX_PROC_MAX_FD; ++i) {
         if (!g_fds[i].used) {
             g_fds[i].used  = true;
+            g_fds[i].owner = ax_proc_current_pid();
             g_fds[i].flags = flags;
             g_fds[i].pos   = 0;
             g_fds[i].data  = (const uint8_t*)data;
@@ -416,11 +426,21 @@ int ax_proc_read(int fd, void* buf, uint64_t len)
     }
 
     if (fd == 0) {
-        /* Entrada estandar: se lee del puerto serie. */
+        /* Entrada estandar: teclado PS/2 + puerto serie. */
         uint8_t* out = (uint8_t*)buf;
         uint64_t n = 0;
         while (n < len) {
-            out[n++] = (uint8_t)ax_console_getc();
+            char c = ax_console_read();
+            if ((unsigned char)c == 0x03) {
+                if (ax_signal_taken_mask() != 0) {
+                    (void)ax_signal_take(AX_SIGINT);
+                } else {
+                    (void)ax_signal_send(ax_proc_current_pid(), AX_SIGINT);
+                    ax_signal_check();
+                }
+                return AX_EINTR;
+            }
+            out[n++] = (uint8_t)c;
         }
         return (int)n;
     }
@@ -484,6 +504,83 @@ int ax_proc_close(int fd)
     return 0;
 }
 
+/* Cierra todos los descriptores abiertos por un proceso. */
+int ax_proc_close_owned(uint64_t pid)
+{
+    if (pid == 0) {
+        return 0;
+    }
+    int closed = 0;
+    for (int i = 3; i < AX_PROC_MAX_FD; ++i) {
+        if (g_fds[i].used && g_fds[i].owner == pid) {
+            ax_memset(&g_fds[i], 0, sizeof(g_fds[i]));
+            closed++;
+        }
+    }
+    return closed;
+}
+
+/*
+ * Recolector de recursos de procesos: libera ranuras y descriptores cuyo
+ * hilo ya no existe o esta en estado zombi.  Los hilos zombis se reapean
+ * aparte con ax_thread_reap_zombies().
+ */
+int ax_proc_gc(uint64_t* slots_out, uint64_t* fds_out)
+{
+    int slots = 0;
+    int fds = 0;
+
+    for (uint32_t i = 0; i < AX_USER_MAX_SLOTS; ++i) {
+        if (!g_slots[i].used) {
+            continue;
+        }
+        AxThread* t = ax_thread_by_id(g_slots[i].pid);
+        if (!t || t->state == AX_THREAD_ZOMBIE) {
+            fds += ax_proc_close_owned(g_slots[i].pid);
+            ax_slot_release((int)i);
+            slots++;
+        }
+    }
+
+    /* Descriptores de procesos que murieron sin pasar por wait(). */
+    for (int i = 3; i < AX_PROC_MAX_FD; ++i) {
+        if (!g_fds[i].used || g_fds[i].owner == 0) {
+            continue;
+        }
+        AxThread* t = ax_thread_by_id(g_fds[i].owner);
+        if (!t || t->state == AX_THREAD_ZOMBIE) {
+            ax_memset(&g_fds[i], 0, sizeof(g_fds[i]));
+            fds++;
+        }
+    }
+
+    if (slots_out) *slots_out = (uint64_t)slots;
+    if (fds_out) *fds_out = (uint64_t)fds;
+    return slots + fds;
+}
+
+uint32_t ax_proc_slot_used(void)
+{
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < AX_USER_MAX_SLOTS; ++i) {
+        if (g_slots[i].used) {
+            n++;
+        }
+    }
+    return n;
+}
+
+uint32_t ax_proc_fd_used(void)
+{
+    uint32_t n = 0;
+    for (int i = 3; i < AX_PROC_MAX_FD; ++i) {
+        if (g_fds[i].used) {
+            n++;
+        }
+    }
+    return n;
+}
+
 int ax_proc_lseek(int fd, int64_t offset, int whence)
 {
     if (fd < 3 || fd >= AX_PROC_MAX_FD) {
@@ -521,15 +618,32 @@ int ax_proc_gets(char* buf, uint64_t max)
 
     uint64_t n = 0;
     for (;;) {
-        char c = ax_console_getc();
+        char c = ax_console_read();
+
+        /* Ctrl+C (o cualquier senal pendiente): se aborta la linea. */
+        if ((unsigned char)c == 0x03) {
+            if (ax_signal_taken_mask() != 0) {
+                (void)ax_signal_take(AX_SIGINT);
+            } else {
+                (void)ax_signal_send(ax_proc_current_pid(), AX_SIGINT);
+                ax_signal_check();
+            }
+            return AX_EINTR;
+        }
+
         if (c == '\r' || c == '\n') {
+            ax_putc('\n');
             break;
         }
         if (c == 8 || c == 127) {       /* backspace */
             if (n > 0) {
                 n--;
+                ax_puts("\b \b");
             }
             continue;
+        }
+        if (c >= 32 && c < 127) {
+            ax_putc(c);
         }
         if (n + 1 < max) {
             buf[n++] = c;

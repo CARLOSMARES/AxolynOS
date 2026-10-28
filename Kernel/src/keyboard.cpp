@@ -200,8 +200,28 @@ void ax_keyboard_irq(void)
 
         if (g_extended) {
             g_extended = false;
-            /* De momento las teclas extendidas solo actualizan Ctrl/Alt. */
-            if (code == 0x1D) {
+            /* Teclas extendidas: se traducen a las mismas secuencias ANSI que
+               envia un terminal, para que la shell y los editores no tengan
+               que distinguir el origen. */
+            const char* seq = nullptr;
+            switch (code) {
+                case 0x48: seq = "\x1b[A"; break;   /* flecha arriba */
+                case 0x50: seq = "\x1b[B"; break;   /* flecha abajo  */
+                case 0x4D: seq = "\x1b[C"; break;   /* flecha derecha*/
+                case 0x4B: seq = "\x1b[D"; break;   /* flecha izquierda */
+                case 0x47: seq = "\x1b[H"; break;   /* Inicio        */
+                case 0x4F: seq = "\x1b[F"; break;   /* Fin           */
+                case 0x52: seq = "\x1b[2~"; break;  /* Insert        */
+                case 0x53: seq = "\x1b[3~"; break;  /* Supr          */
+                case 0x49: seq = "\x1b[5~"; break;  /* RePag         */
+                case 0x51: seq = "\x1b[6~"; break;  /* AvPag         */
+                default: break;
+            }
+            if (seq && !released) {
+                for (int i = 0; seq[i]; ++i) {
+                    ax_kbd_push(seq[i]);
+                }
+            } else if (code == 0x1D) {
                 g_ctrl = !released;
             } else if (code == 0x38) {
                 g_alt = !released;

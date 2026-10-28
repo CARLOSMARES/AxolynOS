@@ -84,6 +84,14 @@ restaura.
 | 25 | `AX_SYS_YIELD` | - | 0 |
 | 26 | `AX_SYS_THREADS` | `buf, max` | numero de hilos |
 | 27 | `AX_SYS_VMSTATUS` | `AxVmInfo*` | 0 o error |
+| 28 | `AX_SYS_POWEROFF` | - | no retorna (apaga la maquina) |
+| 29 | `AX_SYS_SUSPEND` | - | 0 o error (suspension ACPI) |
+| 30 | `AX_SYS_HALT` | - | no retorna (detiene la CPU) |
+| 31 | `AX_SYS_DISKREAD` | `lba, buf, count` | 0 o error |
+| 32 | `AX_SYS_DISKWRITE` | `lba, buf, count` | 0 o error |
+| 33 | `AX_SYS_SIGNAL` | `sig, accion` | 0 o error |
+| 34 | `AX_SYS_SIGSEND` | `pid, sig` | 0 o error |
+| 35 | `AX_SYS_SIGPENDING` | `sig` (0 = mascara) | 1/0 o mascara |
 
 Los numeros **100 en adelante** estan reservados para los modulos del
 kernel (ver [05-modulos.md](05-modulos.md)).
@@ -130,7 +138,62 @@ int status = ax_syscall1(AX_SYS_WAIT, pid);
 La aplicacion hijo corre en su propio hilo con su propia pila de usuario;
 `AX_SYS_WAIT` bloquea al padre hasta que el hijo termina.
 
-## 6. Como anadir una syscall nueva
+## 6. Senales
+
+Las senales se implementan con una mascara de bits por hilo
+(`AxThread::sig_pending`, `sig_taken` y `sig_handlers`).  Las constantes
+coinciden con POSIX:
+
+| Senal | Numero |
+|---|---|
+| `AX_SIGHUP` | 1 |
+| `AX_SIGINT` | 2 |
+| `AX_SIGQUIT` | 3 |
+| `AX_SIGKILL` | 9 |
+| `AX_SIGUSR1` / `AX_SIGUSR2` | 10 / 12 |
+| `AX_SIGTERM` | 15 |
+| `AX_SIGCHLD` / `AX_SIGCONT` / `AX_SIGSTOP` | 17 / 18 / 19 |
+
+`AX_SYS_SIGNAL` instala la accion del proceso actual:
+
+```c
+ax_syscall2(AX_SYS_SIGNAL, AX_SIGINT, AX_SIG_IGN);   // ignorar Ctrl+C
+ax_syscall2(AX_SYS_SIGNAL, AX_SIGINT, AX_SIG_DFL);   // accion por defecto
+ax_syscall2(AX_SYS_SIGNAL, AX_SIGTERM, (long)mi_handler);
+```
+
+* `AX_SIG_DFL`: termina el proceso.  Para `SIGINT` el codigo de salida es
+  `130`.
+* `AX_SIG_IGN`: descarta la senal.
+* Cualquier otro valor se guarda como direccion de un manejador de user
+  mode.  El kernel **no** cambia de contexto a ring 3 para ejecutarlo: la
+  espera de consola se interrumpe y devuelve `AX_EINTR`, y la aplicacion
+  consulta la senal con `AX_SYS_SIGPENDING`.
+
+```c
+long n = ax_syscall3(AX_SYS_READ, 0, (long)buf, sizeof(buf));
+if (n == AX_EINTR) {
+    if (ax_syscall1(AX_SYS_SIGPENDING, AX_SIGINT)) {
+        /* Ctrl+C recibido: limpiar y continuar o salir */
+    }
+}
+```
+
+`AX_SYS_SIGPENDING` con `sig = 0` devuelve la mascara completa (bit 0 =
+senal 1).  Con `sig > 0` devuelve 1 y consume la senal entregada, o 0 si
+no estaba pendiente.
+
+Ctrl+C en la consola se traduce en `AX_SIGINT` para el proceso en primer
+plano (`ax_signal_set_foreground`).  El shell lo fija antes de esperar a
+una aplicacion y lo limpia al recuperar el prompt.  `AX_SYS_SIGSEND`
+permite enviar una senal a otro pid; `SIGKILL` termina el proceso de
+inmediato y el resto queda pendiente hasta que vuelva a ejecutarse.
+
+> Las senales se comprueban al entrar y salir de las syscalls y en las
+> esperas de consola.  No hay entrega asincrona mientras la aplicacion
+> esta ejecutando codigo de usuario.
+
+## 7. Como anadir una syscall nueva
 
 1. Anade el numero a `enum { AX_SYS_* }` en `apis/include/axos/abi.h`
    (al final, para no renumerar las existentes).

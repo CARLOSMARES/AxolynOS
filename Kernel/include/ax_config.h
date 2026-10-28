@@ -57,7 +57,7 @@
 #define AX_MODSTAGE_SIZE        0x0000000000800000ull   /* 8 MiB         */
 
 #define AX_INITRD_PHYS          0x0000000001F00000ull
-#define AX_INITRD_MAX           0x0000000000100000ull   /* 1 MiB         */
+#define AX_INITRD_MAX           0x0000000000300000ull   /* 3 MiB         */
 
 /* ------------------------------------------------------------------ */
 /* Mapa virtual del kernel (higher half)                               */

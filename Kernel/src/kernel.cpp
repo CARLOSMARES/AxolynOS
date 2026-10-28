@@ -32,7 +32,12 @@
 #include "ax_audio.h"
 #include "ax_video.h"
 #include "ax_fs_disk.h"
+#include "ax_install.h"
+#include "ax_gc.h"
+#include "ax_net.h"
 #include "ax_keyboard.h"
+#include "ax_user.h"
+#include "ax_signal.h"
 
 /* ------------------------------------------------------------------ */
 /* Pilas propias del kernel                                             */
@@ -135,6 +140,17 @@ void ax_halt(void)
     for (;;) {
         __asm__ volatile("cli; hlt");
     }
+}
+
+void ax_poweroff(void)
+{
+    ax_printf("[kernel] apagando...\n");
+    /* ACPI PM1a_CNT (S5) via puertos 0xB004/0x604 en QEMU/bochs; mejor esfuerzo. */
+    __asm__ volatile("outw %0, %1" : : "a"((uint16_t)0x2000), "Nd"((uint16_t)0x604) : "memory");
+    __asm__ volatile("outw %0, %1" : : "a"((uint16_t)0x2000), "Nd"((uint16_t)0xB004) : "memory");
+    /* APM legacy */
+    __asm__ volatile("mov $0x5307, %%ax; mov $0x0001, %%bx; mov $0x0003, %%cx; out %%ax, %%dx" : : "d"((uint16_t)0xB004) : "ax","bx","cx");
+    ax_halt();
 }
 
 void ax_reboot(void)
@@ -276,7 +292,17 @@ void ax_kernel_init(AxBootInfo* info)
     ax_disk_init();
     ax_audio_init();
     ax_video_init();
+    ax_user_init();
+    ax_signal_init();
     ax_fs_disk_init();
+
+    /* Si el volumen tiene /etc/passwd se cargan las cuentas; si no, la shell
+       pedira crear la primera cuenta antes de mostrar el prompt. */
+    ax_user_boot();
+
+    ax_install_init();
+    ax_gc_init();
+    ax_net_init();
 
     /* --- User mode ---------------------------------------------------- */
     ax_boot_stage_value = AX_BOOT_STAGE_USER;

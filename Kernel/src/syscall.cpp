@@ -31,6 +31,7 @@
 #include "ax_sched.h"
 #include "ax_power.h"
 #include "ax_disk.h"
+#include "ax_signal.h"
 
 /* ------------------------------------------------------------------ */
 /* Tabla de handlers                                                   */
@@ -327,6 +328,32 @@ static int sys_kill(uint64_t* args, uint64_t* ret)
 {
     (void)ret;
     return ax_proc_kill(args[0]);
+}
+
+/* AX_SYS_SIGNAL: rdi=senal rsi=accion (AX_SIG_DFL, AX_SIG_IGN o manejador) */
+static int sys_signal(uint64_t* args, uint64_t* ret)
+{
+    (void)ret;
+    return ax_signal_set((int)args[0], args[1]);
+}
+
+/* AX_SYS_SIGSEND: rdi=pid rsi=senal */
+static int sys_sigsend(uint64_t* args, uint64_t* ret)
+{
+    (void)ret;
+    return ax_signal_send(args[0], (int)args[1]);
+}
+
+/* AX_SYS_SIGPENDING: rdi=senal (0 = mascara) -> 1/0 o mascara */
+static int sys_sigpending(uint64_t* args, uint64_t* ret)
+{
+    if (args[0] == 0) {
+        *ret = (uint64_t)(ax_signal_pending_mask() | ax_signal_taken_mask());
+        return 0;
+    }
+    *ret = (uint64_t)(ax_signal_is_pending((int)args[0]) ||
+                      ax_signal_take((int)args[0]) ? 1 : 0);
+    return 0;
 }
 
 static int sys_yield(uint64_t* args, uint64_t* ret)
@@ -687,6 +714,9 @@ void ax_syscall_init(void)
     ax_syscall_register(AX_SYS_HALT,      sys_halt);
     ax_syscall_register(AX_SYS_DISKREAD,  sys_diskread);
     ax_syscall_register(AX_SYS_DISKWRITE, sys_diskwrite);
+    ax_syscall_register(AX_SYS_SIGNAL,    sys_signal);
+    ax_syscall_register(AX_SYS_SIGSEND,   sys_sigsend);
+    ax_syscall_register(AX_SYS_SIGPENDING, sys_sigpending);
 }
 
 /* ------------------------------------------------------------------ */
@@ -702,11 +732,18 @@ extern "C" uint64_t ax_syscall_entry(uint64_t nr, uint64_t* args)
 
     g_call_count++;
 
+    /* Una senal pendiente con accion por defecto termina el proceso antes
+       de ejecutar la syscall (Ctrl+C = SIGINT). */
+    ax_signal_check();
+
     int rc = ax_syscall_dispatch(nr, args, &ret);
     if (rc != 0) {
         /* Los errores se devuelven como -errno en RAX. */
         ret = (uint64_t)(int64_t)rc;
     }
+
+    /* Y tambien al volver, por si la syscall bloqueo (lectura de consola). */
+    ax_signal_check();
 
     /* Se escribe tambien en el canal de retorno del trampolin, por
        compatibilidad con las dos convenciones. */

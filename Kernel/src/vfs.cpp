@@ -149,9 +149,25 @@ static int ax_vfs_find(const char* path)
         return 0;   /* la raiz */
     }
 
+    uint64_t nlen = ax_strlen(norm);
+
     for (uint32_t i = 0; i < g_count; ++i) {
-        if (ax_streq(g_entries[i].name, norm)) {
+        const char* name = g_entries[i].name;
+        if (ax_streq(name, norm)) {
             return (int)i;
+        }
+
+        /* Los directorios del initrd llevan '/' final ("apps/"), mientras
+           que la ruta normalizada no ("apps").  Se aceptan ambas formas. */
+        if (g_entries[i].type == AXFS_TYPE_DIR &&
+            ax_strlen(name) == nlen + 1 && name[nlen] == '/') {
+            uint64_t k = 0;
+            while (k < nlen && name[k] == norm[k]) {
+                k++;
+            }
+            if (k == nlen) {
+                return (int)i;
+            }
         }
     }
     return -1;
@@ -270,4 +286,12 @@ const char* ax_vfs_name(uint32_t index)
         return nullptr;
     }
     return g_entries[index].name;
+}
+
+const AxfsEntry* ax_vfs_entry(uint32_t index)
+{
+    if (!g_ready || index >= g_count) {
+        return nullptr;
+    }
+    return &g_entries[index];
 }

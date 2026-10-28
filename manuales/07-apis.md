@@ -70,6 +70,71 @@ long status = p.wait();
 axos::println("codigo de salida: " + axos::to_string(status));
 ```
 
+`axos::Process` tambien permite `exit_code()` y `kill()`.
+
+### Senales
+
+Los wrappers de bajo nivel viven en `axos/process.h`:
+
+```c
+#include "axos/process.h"
+
+long ax_proc_signal(long sig, unsigned long accion);
+long ax_proc_sigsend(long pid, long sig);
+long ax_proc_sigpending(long sig);
+```
+
+```c
+/* Ignorar Ctrl+C durante una seccion critica. */
+ax_proc_signal(AX_SIGINT, AX_SIG_IGN);
+
+/* Instalar un manejador propio (ver aviso mas abajo). */
+ax_proc_signal(AX_SIGINT, (unsigned long)mi_handler);
+
+/* Enviar SIGTERM a otro proceso. */
+ax_proc_sigsend(pid, AX_SIGTERM);
+
+/* Consultar si llego SIGINT. */
+if (ax_proc_sigpending(AX_SIGINT)) {
+    /* ... */
+}
+```
+
+Comportamiento de Ctrl+C:
+
+* `AX_SIG_DFL` (por defecto): el proceso termina con codigo 130 y el shell
+  recupera el prompt.
+* `AX_SIG_IGN`: la senal se descarta.
+* Manejador propio: no se ejecuta en ring 0.  La lectura de consola
+  (`ax_console_read_line`, `axos::gets`, `AX_SYS_READ`/`AX_SYS_GETS`)
+  devuelve `AX_EINTR` y la aplicacion debe consultar la senal con
+  `ax_proc_sigpending()` y decidir si limpia y continua o sale.
+
+```c
+char linea[128];
+long n = ax_console_read_line(linea, sizeof(linea) - 1);
+if (n == AX_EINTR && ax_proc_sigpending(AX_SIGINT)) {
+    axos::println("\ninterrumpido");
+}
+```
+
+`ax_proc_signal()` y `ax_proc_sigsend()` devuelven `0` o un error
+negativo; `ax_proc_sigpending(0)` devuelve la mascara completa de senales
+(bits 0..31 = senales 1..32) y con `sig > 0` devuelve 1/0.
+
+### Sesiones y primer arranque
+
+El login no es una API de `libaxos`: lo gestiona el shell en el hilo
+principal (con teclado y temporizador activos).  En el primer arranque,
+si no existe `/etc/passwd`, el shell pide crear una cuenta y la guarda en
+el volumen AxFS-D.  En arranques posteriores pide usuario y contraseña.
+
+Ordenes relacionadas: `logout`, `login <usuario> <clave>`,
+`adduser <usuario> <clave> [admin]`, `whoami` y `users`.  La cuenta
+`root`/`root` se mantiene como recuperacion.  Las aplicaciones de usuario
+no reciben credenciales; el control de acceso se aplica en el shell y en
+las operaciones de disco.
+
 ### Modulos
 
 ```cpp

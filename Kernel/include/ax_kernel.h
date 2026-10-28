@@ -47,6 +47,10 @@ int  ax_proc_open(const char* path, uint64_t flags);
 int  ax_proc_read(int fd, void* buf, uint64_t len);
 int  ax_proc_write(int fd, const void* buf, uint64_t len);
 int  ax_proc_close(int fd);
+int  ax_proc_close_owned(uint64_t pid);
+int  ax_proc_gc(uint64_t* slots_out, uint64_t* fds_out);
+uint32_t ax_proc_slot_used(void);
+uint32_t ax_proc_fd_used(void);
 int  ax_proc_lseek(int fd, int64_t offset, int whence);
 
 /* Lee una linea de la entrada estandar (consola). */

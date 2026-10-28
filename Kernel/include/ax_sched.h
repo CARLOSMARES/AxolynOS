@@ -5,6 +5,7 @@
 #define AX_SCHED_H
 
 #include "ax_types.h"
+#include "ax_signal.h"
 
 typedef struct AxThread AxThread;
 
@@ -38,6 +39,11 @@ struct AxThread {
     AxThread*    prev;
     int          is_user;
     uint32_t      vm_id;            /* id de VM si el hilo ejecuta bytecode */
+
+    /* Senales (Kernel/src/signal.cpp).  La mascara usa (senal - 1) como bit. */
+    uint32_t     sig_pending;
+    uint32_t     sig_taken;
+    uint64_t     sig_handlers[AX_SIG_MAX + 1];
 };
 
 void      ax_sched_init(void);
@@ -45,6 +51,8 @@ AxThread* ax_thread_create_kernel(const char* name, void (*entry)(void*), void* 
 AxThread* ax_thread_create_user(const char* name, uint64_t entry, uint64_t user_stack_top);
 void      ax_thread_exit(int code);
 void      ax_thread_reap(AxThread* thread);
+int       ax_thread_reap_zombies(void);
+uint32_t  ax_thread_zombie_count(void);
 void      ax_thread_yield(void);
 void      ax_thread_block(void);
 void      ax_thread_wakeup(AxThread* thread);

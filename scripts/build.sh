@@ -277,14 +277,25 @@ build_initrd() {
     warn "falta build/tools/mkinitramfs"; return 0
   fi
   local stage="$BUILD/disk/root"
-  rm -rf "$stage"; mkdir -p "$stage/apps" "$stage/modules" "$stage/etc" "$stage/lib" "$stage/help"
+  rm -rf "$stage"; mkdir -p "$stage/apps" "$stage/modules" "$stage/etc" "$stage/lib" "$stage/help" "$stage/install"
   cp -f "$BUILD/apps"/*.elf "$stage/apps/" 2>/dev/null || true
   cp -f "$BUILD/apps"/*.axb "$stage/apps/" 2>/dev/null || true
   cp -f "$BUILD/apps"/*.axe "$stage/apps/" 2>/dev/null || true
+  # Copia de los ejecutables en la raiz: asi "dir" en C:\ muestra las
+  # aplicaciones como ficheros normales y se pueden lanzar por su nombre
+  # (calc, edit, vi, ...) sin escribir la ruta /apps/.
+  cp -f "$BUILD/apps"/*.axe "$stage/" 2>/dev/null || true
+  cp -f "$BUILD/apps"/*.axb "$stage/" 2>/dev/null || true
   cp -f "$BUILD/lib"/*.axl "$stage/lib/" 2>/dev/null || true
   cp -f "$ROOT"/apps/help/*.axh "$stage/help/" 2>/dev/null || true
   cp -f "$BUILD/modules"/*.axmod "$stage/modules/" 2>/dev/null || true
   cp -f "$ROOT"/apps/axolyn/*.ax "$stage/apps/" 2>/dev/null || true
+
+  # Payload del instalador: el kernel ELF, el cargador y la cabecera AXDSK
+  # se copian dentro del initrd.  El initrd en si se toma de RAM al instalar.
+  cp -f "$BUILD/stage1.bin" "$stage/install/" 2>/dev/null || true
+  cp -f "$BUILD/stage2.bin" "$stage/install/" 2>/dev/null || true
+  cp -f "$BUILD/axolyn.elf" "$stage/install/" 2>/dev/null || true
   cat > "$stage/etc/motd" <<'EOF'
 AxolynOS - sistema experimental de microkernel.
 Escribe "help" para ver los comandos disponibles.

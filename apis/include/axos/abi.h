@@ -63,8 +63,25 @@ enum {
     AX_SYS_HALT       = 30, /* detiene el sistema                       */
     AX_SYS_DISKREAD   = 31, /* rdi=lba rsi=buf rdx=count                */
     AX_SYS_DISKWRITE  = 32, /* rdi=lba rsi=buf rdx=count                */
-    AX_SYS_MAX        = 33
+    AX_SYS_SIGNAL     = 33, /* rdi=senal rsi=accion (DFL/IGN/manejador) */
+    AX_SYS_SIGSEND    = 34, /* rdi=pid rsi=senal                       */
+    AX_SYS_SIGPENDING = 35, /* rdi=senal (0=mascara) -> 1/0 | mascara   */
+    AX_SYS_MAX        = 36
 };
+
+/* Senales (coinciden con Kernel/include/ax_signal.h). */
+#ifndef AX_SIGINT
+#define AX_SIGINT   2
+#define AX_SIGQUIT  3
+#define AX_SIGKILL  9
+#define AX_SIGTERM  15
+#define AX_SIGSTOP  19
+#endif
+
+#ifndef AX_SIG_DFL
+#define AX_SIG_DFL  0ull
+#define AX_SIG_IGN  1ull
+#endif
 
 /* Codigos de error (negativos) */
 enum {

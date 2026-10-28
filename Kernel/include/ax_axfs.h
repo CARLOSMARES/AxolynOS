@@ -49,4 +49,9 @@ int  ax_vfs_list(char* out, uint64_t max);   /* lista separada por \n */
 uint32_t ax_vfs_count(void);
 const char* ax_vfs_name(uint32_t index);
 
+/* Entrada completa del initrd (nombre, tipo y tamano).  Devuelve nullptr si
+   el indice esta fuera de rango.  La usa el instalador para copiar todo el
+   arbol al disco y la shell para listar sin volumen montado. */
+const AxfsEntry* ax_vfs_entry(uint32_t index);
+
 #endif /* AX_AXFS_H */

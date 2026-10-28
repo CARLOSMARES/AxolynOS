@@ -10,8 +10,16 @@
  *      AX_SYS_EXITCODE (22) rdi=pid -> codigo de salida
  *      AX_SYS_KILL     (24) rdi=pid
  *      AX_SYS_YIELD    (25) cede el CPU al planificador
+ *      AX_SYS_SIGNAL   (33) rdi=senal rsi=accion
+ *      AX_SYS_SIGSEND  (34) rdi=pid rsi=senal
+ *      AX_SYS_SIGPENDING (35) rdi=senal (0=mascara)
  *
  * Convencion de retorno: >= 0 exito, < 0 error (-errno).
+ *
+ * Senales: Ctrl+C en el primer plano envia AX_SIGINT.  Con la accion por
+ * defecto (AX_SIG_DFL) el proceso termina; AX_SIG_IGN la ignora y un
+ * manejador propio hace que la lectura de teclado devuelva AX_EINTR.  La
+ * aplicacion puede consultar la senal con ax_proc_sigpending().
  */
 #ifndef AXOS_PROCESS_H
 #define AXOS_PROCESS_H
@@ -52,6 +60,24 @@ long ax_proc_kill(long pid);
 
 /* Cede el CPU al planificador del kernel. */
 long ax_proc_yield(void);
+
+/*
+ * Instala la accion para una senal en el proceso actual.
+ *   handler = AX_SIG_DFL (por defecto), AX_SIG_IGN (ignorar) o la
+ *   direccion de una funcion manejadora (no se ejecuta en ring 0; en su
+ *   lugar la lectura de consola devuelve AX_EINTR).
+ */
+long ax_proc_signal(long sig, unsigned long handler);
+
+/* Envia una senal a otro proceso (o al actual con pid=0). */
+long ax_proc_sigsend(long pid, long sig);
+
+/*
+ * Consulta una senal pendiente/entregada del proceso actual.
+ *   sig = 0  -> mascara de todas las senales (bits 0..31 = senales 1..32)
+ *   sig > 0  -> 1 si esa senal esta pendiente, 0 si no
+ */
+long ax_proc_sigpending(long sig);
 
 #ifdef __cplusplus
 } /* extern "C" */

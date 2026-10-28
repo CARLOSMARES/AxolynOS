@@ -619,6 +619,32 @@ void ax_thread_reap(AxThread* thread)
     thread->state = AX_THREAD_FREE;
 }
 
+/* Recolector de basura: libera todos los hilos zombis que no sean el actual. */
+int ax_thread_reap_zombies(void)
+{
+    int reaped = 0;
+    for (int i = 0; i < AX_MAX_THREADS; ++i) {
+        AxThread* t = &g_threads[i];
+        if (t != g_current && t->state == AX_THREAD_ZOMBIE) {
+            ax_thread_reap(t);
+            reaped++;
+        }
+    }
+    return reaped;
+}
+
+/* Numero de hilos zombis pendientes de recoger. */
+uint32_t ax_thread_zombie_count(void)
+{
+    uint32_t n = 0;
+    for (int i = 0; i < AX_MAX_THREADS; ++i) {
+        if (g_threads[i].state == AX_THREAD_ZOMBIE) {
+            n++;
+        }
+    }
+    return n;
+}
+
 void ax_thread_yield(void)
 {
     AxThread* cur = ax_current_thread();
