@@ -138,6 +138,7 @@ void ax_service_init(void)
     ax_service_register("network", "pila TCP/IP e1000", true, svc_net, 0);
 
     ax_service_register("shell", "shell del sistema", false, 0, 0);
+    ax_service_mark_started("shell");
     ax_printf("[service] gestor con %d servicios registrados\n", g_count);
 }
 

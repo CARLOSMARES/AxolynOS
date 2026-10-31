@@ -595,6 +595,8 @@ static int sys_sysinfo(uint64_t* args, uint64_t* ret)
     AxSysInfo* info = (AxSysInfo*)(uintptr_t)out;
     ax_memset(info, 0, sizeof(*info));
     info->uptime_ms    = ax_uptime_ms();
+    /* La hora del sistema la toma del reloj de hardware (RTC) del PC. */
+    info->unix_ms      = ax_rtc_unix() * 1000;
     info->cpu_count    = 1;
     info->thread_count = ax_thread_count();
     ax_strlcpy(info->kernel_version, AX_VERSION_STRING, sizeof(info->kernel_version));

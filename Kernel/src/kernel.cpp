@@ -294,23 +294,13 @@ void ax_kernel_init(AxBootInfo* info)
     /* Los modulos presentes en el initrd se cargan automaticamente. */
     ax_module_autoload();
 
-    /* --- Hardware / Drivers ------------------------------------------- */
-    ax_power_init();
-    ax_pci_init();
-    ax_disk_init();
-    ax_audio_init();
-    ax_video_init();
-    ax_user_init();
-    ax_signal_init();
-    ax_fs_disk_init();
-
-    /* Si el volumen tiene /etc/passwd se cargan las cuentas; si no, la shell
-       pedira crear la primera cuenta antes de mostrar el prompt. */
-    ax_user_boot();
-
-    ax_install_init();
-    ax_gc_init();
-    ax_net_init();
+    /* --- Servicios del sistema ---------------------------------------- */
+    /* El gestor de servicios registra los subsistemas del kernel y arranca
+       los que tienen auto_start habilitado (drivers, usuarios, red, GC, ...).
+       Asi los subsistemas pasan a ser gestionados desde un unico punto en
+       lugar de inicializaciones directas dispersas. */
+    ax_service_init();
+    ax_service_autostart();
 
     /* --- User mode ---------------------------------------------------- */
     ax_boot_stage_value = AX_BOOT_STAGE_USER;

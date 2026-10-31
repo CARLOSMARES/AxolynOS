@@ -37,6 +37,7 @@
 #include "ax_editor.h"
 #include "ax_net.h"
 #include "ax_user.h"
+#include "ax_service.h"
 
 #define AX_SHELL_MAX_LINE 256
 #define AX_SHELL_MAX_ARGS  8
@@ -396,6 +397,8 @@ static void cmd_help(void)
     ax_puts("  run <app> [args]  ejecuta una aplicacion nativa (.axe/.elf)\n");
     ax_puts("  ax <app> [args]   ejecuta una aplicacion Axolyn (.axb)\n");
     ax_puts("  mods              modulos cargados\n");
+    ax_puts("  services          servicios del sistema (estado)\n");
+    ax_puts("  service start|stop <nombre>\n");
     ax_puts("  mem               informacion de memoria\n");
     ax_puts("  heap              informacion del heap\n");
     ax_puts("  uptime            tiempo desde el arranque\n");
@@ -565,6 +568,58 @@ static void cmd_mods(void)
         ax_puthex(info[i].vaddr);
         ax_puts("\n");
     }
+}
+
+static void cmd_services(void)
+{
+    uint32_t total = ax_service_count();
+    if (total == 0) {
+        ax_puts("no hay servicios registrados\n");
+        return;
+    }
+    ax_puts("servicios:\n");
+    for (uint32_t i = 0; i < total; ++i) {
+        AxServiceInfoK info;
+        if (ax_service_enum(i, &info) != 0) {
+            continue;
+        }
+        ax_puts("  [");
+        ax_putdec((int64_t)i);
+        ax_puts("] ");
+        ax_puts(info.name);
+        ax_puts("  estado=");
+        ax_puts(ax_service_state_name(info.state));
+        ax_puts("  auto=");
+        ax_puts(info.auto_start ? "si" : "no");
+        ax_puts("  ");
+        ax_puts(info.description);
+        ax_puts("\n");
+    }
+}
+
+static void cmd_service(char** args, size_t count)
+{
+    if (count < 3) {
+        ax_puts("uso: service start <nombre> | service stop <nombre>\n");
+        return;
+    }
+    const char* sub = args[1];
+    const char* name = args[2];
+    int rc = -1;
+    bool ok = false;
+    if (shell_streq(sub, "start")) {
+        ok = (ax_service_start(name) == 0);
+    } else if (shell_streq(sub, "stop")) {
+        ok = (ax_service_stop(name) == 0);
+    } else {
+        ax_puts("servicio desconocido: ");
+        ax_puts(sub);
+        ax_puts("\n");
+        return;
+    }
+    ax_puts(ok ? "servicio " : "no se pudo gestionar el servicio ");
+    ax_puts(name);
+    ax_puts("\n");
 }
 
 static void cmd_mem(void)
@@ -2052,6 +2107,8 @@ static void cmd_free();
 static void cmd_uname();
 static void cmd_which(char** args, size_t count);
 static void cmd_history();
+static void cmd_services(void);
+static void cmd_service(char** args, size_t count);
 
 static void shell_execute(char* line)
 {
@@ -2109,6 +2166,8 @@ static void shell_execute(char* line)
     else if (shell_streq(cmd, "apps"))   cmd_apps();
     else if (shell_streq(cmd, "libs"))   cmd_libs();
     else if (shell_streq(cmd, "mods"))   cmd_mods();
+    else if (shell_streq(cmd, "services")) cmd_services();
+    else if (shell_streq(cmd, "service"))  cmd_service(args, count);
     else if (shell_streq(cmd, "mem"))    cmd_mem();
     else if (shell_streq(cmd, "heap"))   cmd_heap();
     else if (shell_streq(cmd, "uptime")) cmd_uptime();

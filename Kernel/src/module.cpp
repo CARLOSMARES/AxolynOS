@@ -285,8 +285,10 @@ int ax_module_load_buffer(const char* name, const void* image, uint64_t size)
     m->ctx.lookup           = mod_lookup;
     m->ctx_valid            = true;
 
-    /* Se llama al punto de entrada del modulo. */
-    ax_module_init_fn init = (ax_module_init_fn)(uintptr_t)(base + hdr->init_offset);
+    /* Se llama al punto de entrada del modulo.  La imagen tiene la cabecera
+       (sizeof(AxModHeader) bytes) delante del codigo, asi que el offset del
+       modulo dentro de la imagen es relativo al inicio del codigo. */
+    ax_module_init_fn init = (ax_module_init_fn)(uintptr_t)(base + sizeof(AxModHeader) + hdr->init_offset);
     int rc = init ? init(&m->ctx) : AX_EINVAL;
     if (rc != 0) {
         ax_printf("[module] '%s': la inicializacion fallo (%d)\n", name, rc);
@@ -517,10 +519,12 @@ void ax_module_init(void)
 void ax_module_autoload(void)
 {
     uint32_t count = ax_vfs_count();
-    int loaded = 0;
+
+    uint32_t loaded = 0;
 
     for (uint32_t i = 0; i < count; ++i) {
         const char* name = ax_vfs_name(i);
+
         if (!name) {
             continue;
         }
@@ -544,7 +548,8 @@ void ax_module_autoload(void)
         if (len < 6) {
             continue;
         }
-        if (!ax_streq(name + len - 5, ".axmod")) {
+        /* La extension ".axmod" ocupa los ultimos 6 caracteres. */
+        if (!ax_streq(name + (len - 6), ".axmod")) {
             continue;
         }
 
