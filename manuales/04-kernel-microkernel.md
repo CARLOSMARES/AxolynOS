@@ -29,7 +29,6 @@ Kernel/src/
   vfs.cpp       lector del initrd (AXFS)
   shell.cpp     interprete de ordenes del kernel
 ```
-
 ## 1. Arranque (`boot.S` + `kernel.cpp`)
 
 `_start` recibe en `RDI` la direccion fisica del `AxBootInfo`, copia el
@@ -53,9 +52,53 @@ consola y serie
   -> shell del kernel
 ```
 
-El orden importa: no se puede asignar memoria antes del PMM, ni hacer
+**Orden importa**: no se puede asignar memoria antes del PMM, ni hacer
 llamadas al sistema antes de instalar la IDT, ni crear hilos antes del
 planificador.
+
+### Ejemplo: Orden de inicialización en kernel.cpp
+
+```cpp
+void kmain(AxBootInfo* boot_info) {
+    // 1. Consola y serie (siempre primero para poder ver mensajes)
+    ax_console_init();
+    
+    // 2. PMM (memoria fisica)
+    ax_pmm_init(boot_info);
+    
+    // 3. VMM (paginacion)
+    ax_vmm_init();
+    
+    // 4. Heap
+    ax_heap_init();
+    
+    // 5. GDT + TSS
+    ax_gdt_init();
+    
+    // 6. IDT + trampolines
+    ax_idt_init();
+    
+    // 7. PIC + timer
+    ax_pic_init();
+    ax_timer_init();
+    
+    // 8. Planificador y syscalls
+    ax_scheduler_init();
+    ax_syscall_init();
+    
+    // 9. VFS e initrd
+    ax_vfs_init();
+    
+    // 10. Modulos
+    ax_module_init();
+    
+    // 11. User mode listo
+    ax_user_mode_init();
+    
+    // 12. Shell
+    ax_shell_init();
+}
+```
 
 ## 2. CPU
 
@@ -68,10 +111,24 @@ planificador.
 | `0x18` | codigo de usuario | 3 |
 | `0x20` | datos de usuario | 3 |
 | `0x28` | TSS | 0 |
+| `0x1B` | codigo usuario (RPL) | 3 |
+| `0x23` | datos usuario (RPL) | 3 |
 
 Los selectores de usuario incluyen el RPL (0x1B y 0x23). La TSS fija
 `rsp0`, la pila a la que se salta cuando una interrupcion llega desde
 user mode.
+
+### Ejemplo: Descriptores GDT
+
+```cpp
+// Definir un selector de código usuario
+#define CODE_USER 0x18
+#define DATA_USER 0x20
+
+// En el inicializador:
+gdt_set_gate(CODE_USER, 0x00000000, 0xFFFFFFFF, 0x9A);
+gdt_set_gate(DATA_USER, 0x00000000, 0xFFFFFFFF, 0x92);
+```
 
 ### IDT (`idt.cpp`)
 
@@ -79,10 +136,22 @@ user mode.
 vector `0x80` (syscall) se instala con **DPL 3**, que es lo que permite
 que el codigo de usuario ejecute `int 0x80`.
 
-### Excepciones (`isr.cpp`)
+### Ejemplo: Instalar handler de syscall
 
-Cada excepcion imprime un volcado de registros y el contenido de `CR2`
-(direccion que provoco el fallo de pagina) y entra en panic.
+```cpp
+// En idt.cpp
+idt_set_gate(0x80, (uint64_t)syscall_handler, 0x08, 0x8E);
+```
+
+### Ejemplo: Manejo de excepciones
+
+```cpp
+// En isr.cpp para division por cero
+void div_zero_handler() {
+    ax_printf("Error: division por cero en %s\n", __FILE__);
+    ax_panic("Division by zero");
+}
+```
 
 ## 3. Memoria
 
@@ -96,6 +165,27 @@ Gestor de frames de 4 KiB con un bitmap. Al inicializarse:
    tablas de pagina y el propio bitmap.
 3. Marca como no usables las zonas de firmware.
 
+### Ejemplo: Inicializar PMM
+
+```cpp
+void pmm_init(AxBootInfo* info) {
+    // 1. Obtener mapa E820
+    auto e820 = *(E820Entry**)info->e820_ptr;
+    
+    // 2. Marcar tramos usables
+    for (int i = 0; i < e820->entry_count; i++) {
+        if (e820->entries[i].type == 1) {  // RAM usable
+            pmm_mark_frame_available(e820->entries[i].base_addr, 
+                                    e820->entries[i].length);
+        }
+    }
+    
+    // 3. Reservar regiones críticas
+    pmm_mark_frame_unavailable(0x200000, 0x200000);  // kernel
+    pmm_mark_frame_unavailable(0x1F00000, 0x100000); // initrd
+}
+```
+
 ### VMM (`vmm.cpp`)
 
 Paginacion de 4 niveles (`PML4 -> PDPT -> PD -> PT`):
@@ -108,12 +198,31 @@ Paginacion de 4 niveles (`PML4 -> PDPT -> PD -> PT`):
 `ax_vmm_translate()` recorre la tabla y devuelve la direccion fisica de
 una virtual; es la base del depurador y de la proteccion de paginas.
 
+### Ejemplo: Mapear una dirección
+
+```cpp
+void* map_virtual(uint64_t phys_addr) {
+    return ax_vmm_translate(phys_addr);
+    // Devuelve la dirección virtual correspondiente
+}
+```
+
 ### Heap (`heap.cpp`)
 
 Heap del kernel sobre la region reservada: bloques con cabecera de
 tamano, lista de libres y fusion de bloques contiguos. `ax_malloc` es la
 unica forma de pedir memoria en el kernel (los modulos tambien usan el
 heap a traves de su contexto).
+
+### Ejemplo: Memoria en kernel
+
+```cpp
+void* ptr = ax_malloc(1024);
+if (ptr) {
+    // Usar memoria
+    ax_free(ptr);  // Liberar cuando termine
+}
+```
 
 ## 4. Hilos y planificador (`sched.cpp`, `context.S`)
 
@@ -125,13 +234,37 @@ Estados: `FREE`, `READY`, `RUNNING`, `BLOCKED`, `ZOMBIE`.
   lo devuelve.
 * `ax_thread_sleep(ms)` implementa la espera con marca de tiempo.
 
+### Cambio de contexto
+
 El cambio de contexto (`ax_context_switch`) guarda `r15..rbp` y el `rsp`
 en el contexto del hilo saliente y los restaura del contexto del
 entrante. Para volver a user mode, el marco de `iretq` preparado en la
 pila del kernel permite regresar al anillo 3 con `cs=0x1B` y `ss=0x23`.
 
-Cada cambio de contexto actualiza `ax_kernel_stack_top`, la variable que
-usa el trampolin de syscall para saber que pila del kernel usar.
+### Ejemplo: Bloquear y despertar hilo
+
+```cpp
+void thread_func(void* arg) {
+    // Hacer algo...
+    ax_thread_block();  // Bloquear este hilo
+    // Nunca llegara aqui hasta que sea despertado
+}
+
+void wakeup_thread() {
+    ax_thread_wakeup(some_thread);
+}
+```
+
+### Ejemplo: Dormir por milisegundos
+
+```cpp
+void periodic_task() {
+    for (;;) {
+        // Hacer trabajo...
+        ax_thread_sleep(100);  // Dormir 100 ms
+    }
+}
+```
 
 ## 5. Llamadas al sistema (`syscall.cpp`)
 
@@ -146,12 +279,36 @@ int handler(uint64_t* args, uint64_t* ret);
 escribe en `*ret`. Un valor negativo significa error (`AX_E*`, que ya
 estan definidos como negativos en `apis/include/axos/abi.h`).
 
-Los modulos pueden registrar syscalls adicionales en la misma tabla
-(numeros a partir del 100).
+### Ejemplo: Llamada al sistema WRITE
+
+```c
+// Escribir en la consola
+char buffer[] = "Hola desde una syscall";
+int ret = ax_syscall3(AX_SYS_WRITE, 1, (uint64_t)buffer, strlen(buffer));
+// ret debe ser el numero de bytes escritos
+```
+
+### Ejemplo: Llamada al sistema SPAWN
+
+```c
+char* argv[] = { "/apps/calc.elf", 0 };
+int pid = ax_syscall3(AX_SYS_SPAWN, (uint64_t)"/apps/calc.elf", 
+                     (uint64_t)argv, 2);
+// pid es el PID del proceso hijo, o negativo en error
+```
+
+### Ejemplo: Registrar una syscall de modulo
+
+```cpp
+// En un modulo kernel
+ctx->register_syscall(120, mi_syscall);
+// Donde mi_syscall tiene la firma:
+// int mi_syscall(uint64_t* args, uint64_t* ret)
+```
 
 ## 6. Procesos y user mode (`proc.cpp`, `elf.cpp`)
 
-`ax_proc_spawn()`:
+### `ax_proc_spawn()`
 
 1. Busca el binario en el initrd (`/apps/<nombre>.axe`, `.elf` o `.axb`).
 2. Si el fichero es un `.axe`, comprueba la cabecera `AXE1`, el tamano y
@@ -165,20 +322,46 @@ Los modulos pueden registrar syscalls adicionales en la misma tabla
 5. Escribe `argc`/`argv` en la pila y crea el hilo de user mode con el
    punto de entrada del ELF.
 
-`ax_proc_wait(pid)` bloquea al llamador (`ax_thread_sleep`) hasta que el
-hilo pasa a `ZOMBIE`, libera su ranura y reapea el hilo para que no queden
-procesos muertos ocupando la tabla. El shell usa este modo sincrono en
-`run`, de forma que la ranura 0 se reutiliza en ejecuciones sucesivas.
+### Ejemplo: Lanzar una aplicacion
 
-El usuario no puede tocar el kernel: el rango alto de direcciones esta
-mapeado sin el bit de usuario, asi que cualquier acceso desde ring 3
-provoca un fallo de pagina.
+```c
+char* argv[] = { "calc", "2+2", 0 };
+int pid = ax_syscall3(AX_SYS_SPAWN, (uint64_t)"/apps/calc.elf", 
+                     (uint64_t)argv, 2);
+// Ejecutar y esperar
+int status = ax_syscall1(AX_SYS_WAIT, pid);
+```
+
+### Ejemplo: Esperar a un proceso
+
+```c
+// Bloquear hasta que el hijo termine
+int status = ax_syscall1(AX_SYS_WAIT, pid);
+// status contiene el codigo de salida
+```
+
+**Importante**: El usuario no puede tocar el kernel: el rango alto de
+direcciones esta mapeado sin el bit de usuario, asi que cualquier acceso
+desde ring 3 provoca un fallo de pagina.
 
 ## 7. IPC (`ipc.cpp`)
 
 Puertos de mensajes numerados (0..31). `ax_ipc_send()` encola un
 mensaje (hasta 4 KiB) y despierta al receptor; `ax_ipc_recv()` bloquea al
 hilo hasta que haya mensaje.
+
+### Ejemplo: Comunicacion entre procesos
+
+```c
+// En el proceso emisor
+char msg[] = "Hola!";
+ax_ipc_send(42, msg, strlen(msg) + 1);  // Enviar al puerto 42
+
+// En el proceso receptor
+char buffer[128];
+int n = ax_ipc_recv(42, buffer, sizeof(buffer));
+// buffer ahora contiene "Hola!"
+```
 
 ## 8. Modulos (`module.cpp`)
 
@@ -190,12 +373,32 @@ Ver [05-modulos.md](05-modulos.md). Resumen:
 * Se le pasa un `AxModuleContext` con los servicios del kernel.
 * Puede registrar syscalls y publicar simbolos.
 
+### Ejemplo: Cargar un modulo desde user mode
+
+```c
+// Desde una aplicacion user mode
+int ret = ax_syscall1(AX_SYS_MODLOAD, (uint64_t)"axmem");
+// Ret = 0 si cargo correctamente
+
+// Listar modulos
+AxModInfo buffer[16];
+int count = ax_syscall2(AX_SYS_MODLIST, (uint64_t)buffer, 16);
+```
+
 ## 9. Maquina virtual (`vmhost.cpp`)
 
 El kernel crea una VM por programa Axolyn y la ejecuta en un hilo propio.
 Las natives de la VM hacen de puente con las syscalls del kernel, de modo
 que un programa Axolyn puede usar el sistema de ficheros, lanzar procesos
 o consultar el reloj.
+
+### Ejemplo: Ejecutar una aplicacion Axolyn
+
+```c
+// Desde user mode
+long pid = ax_syscall1(AX_SYS_VMRUN, (uint64_t)"/apps/mi_app.axb");
+// La VM se crea y empieza a ejecutarse
+```
 
 ## 10. VFS (`vfs.cpp`)
 
@@ -210,8 +413,46 @@ blob de datos
 `ax_vfs_read("/apps/hello.axb", &size)` devuelve un puntero a los bytes.
 El sistema es de **solo lectura**: no hay escritura en disco todavia.
 
+### Ejemplo: Leer un fichero del initrd
+
+```c
+// Leer un archivo del initrd
+size_t size;
+char* data = ax_vfs_read("/apps/hello.axb", &size);
+// data apunta a los bytes del archivo, size tiene el tamanio
+```
+
 ## 11. Shell (`shell.cpp`)
 
 Un REPL que lee de la consola serie y ejecuta ordenes (`help`, `apps`,
 `run`, `ax`, `mods`, `mem`, `threads`, `vm`, `uptime`, `reboot`). Es la
 forma mas rapida de comprobar el estado del sistema.
+
+### Ejemplo: Comandos en el shell
+
+```text
+axolyn:/> help
+available commands: help, apps, run, ax, mods, mem, threads, vm, uptime, reboot
+
+axolyn:/> mods
+loaded modules: axdemo, axmem
+
+axolyn:/> date
+2024-01-15 14:30:00
+
+axolyn:/> time
+14:30:00
+
+axolyn:/> apps
+available apps: calc, hello, sysinfo
+
+axolyn:/> run hello
+running hello...
+
+axolyn:/> reboot
+rebooting system...
+```
+
+---
+
+**Siguiente manual**: [06-llamadas-al-sistema](06-syscalls.md)

@@ -17,7 +17,7 @@ QEMU queda detenido esperando GDB en `127.0.0.1:1234`. En otra terminal:
 (gdb) continue
 ```
 
-Comandos utiles:
+**Comandos utiles**:
 
 | GDB | Para que sirve |
 |---|---|
@@ -73,11 +73,11 @@ El simbolo `ax_syscall_entry` es el punto de entrada de todas las
 llamadas al sistema: es el mejor punto para ver que esta pasando entre
 la aplicacion y el kernel.
 
-Truco: como el kernel es de un solo anillo compartido, un `break` en una
+**Truco**: como el kernel es de un solo anillo compartido, un `break` en una
 funcion del kernel se dispara tanto desde el kernel como desde una
 aplicacion.
 
-## 4. Registro del sistema
+## 3. Registro del sistema
 
 El kernel escribe en la consola VGA **y** en el puerto serie COM1. La
 salida por serie es la mas comoda para depurar:
@@ -93,7 +93,7 @@ qemu-system-x86_64 -drive format=raw,file=build/axolynos.img \
     -m 512 -display none -no-reboot -serial file:build/serial.log
 ```
 
-## 5. Panicos
+## 4. Panicos
 
 Cuando el kernel detecta un error llama a `ax_panic()`, que imprime:
 
@@ -101,7 +101,7 @@ Cuando el kernel detecta un error llama a `ax_panic()`, que imprime:
 2. El mensaje.
 3. Un volcado de los registros (si el panic viene de una excepcion).
 
-Ejemplo:
+**Ejemplo**:
 
 ```
 *** PANIC: Kernel/src/vmm.cpp:142: asercion fallida: (flags & AX_PAGE_PRESENT)
@@ -120,7 +120,7 @@ El sistema se detiene: es preferible a seguir con memoria corrupta.
 | panic en `ax_pmm_alloc_pages` | se pidio mas memoria de la que hay |
 | panic en `ax_module_load` | cabecera `.axmod` incorrecta (comprueba el magic) |
 
-## 6. Comprobar el estado del sistema
+## 5. Comprobar el estado del sistema
 
 Desde el shell del kernel:
 
@@ -134,7 +134,32 @@ vm         maquinas virtuales
 uptime     tiempo desde el arranque
 ```
 
-## 7. Prueba automatica del arranque
+### Ejemplo: Ver estado del sistema
+
+```text
+axolyn:/> mem
+RAM: 512 MiB total, 128 MiB libre
+
+axolyn:/> heap
+Heap: 256 KiB total, 64 KiB libre
+
+axolyn:/> threads
+2 hilos activos, 1 bloqueado
+
+axolyn:/> mods
+cargados: axdemo, axmem
+
+axolyn:/> apps
+aplicaciones: calc, hello, sysinfo
+
+axolyn:/> vm
+maquinas virtuales: 1 activa
+
+axolyn:/> uptime
+tiempo: 00:15:30
+```
+
+## 6. Prueba automatica del arranque
 
 ```bash
 bash scripts/test.sh boot
@@ -144,7 +169,7 @@ Arranca QEMU con el log serie en un fichero, espera 25 segundos y
 comprueba que aparece el banner de AxolynOS. Es la forma mas rapida de
 detectar que una modificación ha roto el arranque.
 
-## 8. Instrumentar el codigo
+## 7. Instrumentar el codigo
 
 El kernel tiene una funcion de impresion formateada:
 
@@ -155,8 +180,18 @@ ax_printf("cargados %d modulos en %llu bytes\n", count, bytes);
 Formatos soportados: `%s`, `%d`, `%i`, `%u`, `%x`, `%X`, `%p`, `%c`, `%%`,
 `%lld`, `%llu`.
 
-Para depurar el planificador:
+### Ejemplo: Instrumentar el planificador
 
 ```cpp
-ax_printf("hilo %s -> %s\n", actual->name, siguiente->name);
+void sched_debug(void) {
+    actual = scheduler_current();
+    siguiente = scheduler_next();
+    if (actual && siguiente) {
+        ax_printf("hilo %s -> %s\n", actual->name, siguiente->name);
+    }
+}
 ```
+
+---
+
+**Siguiente manual**: [13-servicios.md](13-servicios.md)

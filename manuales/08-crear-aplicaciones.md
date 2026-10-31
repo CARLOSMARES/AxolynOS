@@ -7,10 +7,8 @@ Hay dos formas de escribir un programa para el sistema:
 | **Nativa** | C++ (freestanding) | En ring 3, como proceso del kernel | `.axe` (cabecera + ELF64 PIE) |
 | **Axolyn** | Lenguaje Axolyn | En la maquina virtual del kernel | Bytecode `.axb` |
 
-Las dos conviven: una aplicacion nativa puede lanzar una aplicacion
+Ambas conviven: una aplicacion nativa puede lanzar una aplicacion
 Axolyn y viceversa.
-
----
 
 ## 1. Aplicaciones nativas (C++)
 
@@ -32,15 +30,17 @@ int main(int argc, char** argv)
 }
 ```
 
-Y compila:
+**Compila**:
 
 ```bash
 bash scripts/build.sh apps
 ```
 
-El resultado es `build/apps/mi_app.elf` (ELF64 PIE) y
+**Resultado**: `build/apps/mi_app.elf` (ELF64 PIE) y
 `build/apps/mi_app.axe` (el mismo ejecutable empaquetado con su cabecera
-`AXE1`, tamano y CRC32). Para meterla en la imagen:
+`AXE1`, tamano y CRC32).
+
+Para meterla en la imagen:
 
 ```bash
 bash scripts/build.sh initrd image
@@ -58,23 +58,23 @@ El kernel carga el ELF, prepara una pila de usuario y salta a `_start`
 (defined en `apis/src/start.S`):
 
 ```
-  kernel                       user mode
-  ------                       ---------
-  mapea paginas de la app
-  escribe en la pila:
-     [RSP]      argc
-     [RSP+8]    argv[0]
-     [RSP+16]   argv[1]
-     ...         NULL
-  crea el hilo y salta a _start
-                               _start:
-                                 lee argc/argv de la pila
-                                 llama a axos_runtime_start(argc, argv)
-                                 llama a main(argc, argv)
-                                 AX_SYS_EXIT con el codigo de retorno
+kernel                       user mode
+--------                       ---------
+mapea paginas de la app
+escribe en la pila:
+   [RSP]      argc
+   [RSP+8]    argv[0]
+   [RSP+16]   argv[1]
+   ...         NULL
+crea el hilo y salta a _start
+                                _start:
+                                  lee argc/argv de la pila
+                                  llama a axos_runtime_start(argc, argv)
+                                  llama a main(argc, argv)
+                                  AX_SYS_EXIT con el codigo de retorno
 ```
 
-Reglas:
+**Reglas**:
 
 * `main` debe declararse `extern "C" int main(int, char**)`.
 * No hay libc: no existen `printf`, `malloc` ni `strlen`. Usa `libaxos`
@@ -125,6 +125,13 @@ Las aplicaciones se guardan en el initrd (imagen AXFS en memoria) con la
 ruta `/apps/<nombre>.axe`. El kernel las busca ahi cuando se ejecutan.
 Tambien acepta `.elf` sueltos por compatibilidad.
 
+### Ejemplo: Listar aplicaciones
+
+```bash
+axolyn:/> apps
+available apps: calc, hello, sysinfo, edit
+```
+
 ### 1.5 Formato `.axe` y biblioteca `.axl`
 
 Los dos formatos propios usan una cabecera fija y un CRC32 para detectar
@@ -168,7 +175,7 @@ libs
 
 Crea `apps/axolyn/mi_app.ax`:
 
-```
+```axolyn
 import console;
 
 fn main() {
@@ -190,7 +197,7 @@ bash scripts/build.sh apps initrd image
 bash scripts/run.sh
 ```
 
-Y desde otra aplicacion (nativa o Axolyn):
+Desde otra aplicacion (nativa o Axolyn):
 
 ```cpp
 int pid = axos::Vm::run("/apps/mi_app.axb");
@@ -218,7 +225,7 @@ El ciclo recomendado es:
 # 1. compilar la aplicacion
 bash scripts/build.sh apps
 
-# 2. probarla en el host (rapido, sin arrancar el SO)
+# 2. probarla en el host (sin arrancar el SO)
 build/axrun build/apps/mi_app.axb
 
 # 3. arrancar el sistema y probarla dentro
@@ -256,6 +263,20 @@ clear                limpia la pantalla
 reboot               reinicia
 ```
 
+### Ejemplo: Ejecutar aplicaciones desde shell
+
+```text
+axolyn:/> run calc
+running calc...
+
+axolyn:/> ax fizzbuzz
+running FizzBuzz application...
+
+# run prueba primero .axe, luego .elf, luego .axb
+# Cuando la aplicacion es nativa, el shell espera su salida:
+# `ax_proc_wait` libera la ranura de user mode y reapea el hilo
+```
+
 `run` prueba primero `<app>.axe`, despues `<app>.elf` y por ultimo
 `<app>.axb`. Cuando la aplicacion es nativa, el shell espera su salida:
 `ax_proc_wait` libera la ranura de user mode y reapea el hilo, de modo que
@@ -269,8 +290,87 @@ ejecucion.
 | Sintoma | Causa probable |
 |---|---|
 | `undefined reference to main` | falta `extern "C" int main(int, char**)` |
-| Enlace con `R_X86_64_32S ... can not be used when making a PIE object` | la libreria se compilo sin `-fPIE` |
+| `Enlace con R_X86_64_32S ... can not be used when making a PIE object` | la libreria se compilo sin `-fPIE` |
 | La app arranca y muere al instante | `main` devuelve sin llamar a `exit`, o el enlace de la pila esta roto |
 | `AX_ENOENT` al abrir un fichero | la ruta no existe en el initrd (remember `/apps/...`) |
 | La app nativa no ve el initrd | el ELF se cargo en una ranura distinta: revisa `AX_USER_VIRT_BASE` |
 | El programa Axolyn no imprime nada | falta `import console;` o se escribio en `core` en vez de `console` |
+
+---
+
+## 6. Ciclo de desarrollo recomendado
+
+```bash
+# Paso 1: Compilar la aplicacion
+bash scripts/build.sh apps
+
+# Paso 2: Probar en el host (rápido, sin arrancar el SO)
+build/axrun build/apps/mi_app.axb
+
+# Paso 3: Arrancar el sistema y probar dentro
+bash scripts/build.sh initrd image
+bash scripts/run.sh --headless  # log serie en terminal
+
+# Paso 4: Probar la aplicación dentro del SO
+axolyn:/> run mi_app
+```
+
+Ctrl+A y luego X para salir de QEMU.
+
+---
+
+## 7. Formato de las aplicaciones
+
+### Aplicaciones nativas (.axe)
+
+```
+.axe  ax_axe_header (68 bytes)  +  ELF64 PIE
+      magic "AXE1", version, tipo, flags, tamano, crc32,
+      entry/load hints, nombre, arquitectura
+```
+
+### Aplicaciones Axolyn (.axb)
+
+```
+.axb  AxbHeader (64 bytes)  +  code[]  +  constants[]  +  strings[]  +  str_data[]
+      +  functions[]  +  globals[]  +  natives[]  +  imports[]
+```
+
+### Ejemplo: Estructura de archivo .axb
+
+```text
+offset 0:   AxbHeader (64 bytes)
+          - magic: "AXBYTCD1"
+          - version: 1
+          - code_size: X bytes
+          - const_count: N
+          - str_count: M
+          - str_data_size: S bytes
+          - func_count: F
+          - global_count: G
+          - native_count: N
+          - import_count: I
+          - entry_func: index
+          - main_func: index
+          - global_slots: G
+
+offset 64:  code[] (code_size bytes) - las instrucciones bytecode
+
+offset 64+code_size:  constants[] (const_count * 8 bytes) - enteros de 64 bits
+
+offset 64+code_size+const_count*8:  strings[] (str_count entries) - offsets a str_data
+
+offset 64+code_size+const_count*8+str_offsets:  str_data[] (str_data_size bytes) - datos de cadenas
+
+offset ...:  functions[] (func_count entries) - metadatos de funciones
+
+offset ...:  globals[] (global_count entries) - variables globales
+
+offset ...:  natives[] (native_count entries) - natives conocidas
+
+offset ...:  imports[] (import_count entries) - namespaces importados
+```
+
+---
+
+**Siguiente manual**: [09-lenguaje-axolyn.md](09-lenguaje-axolyn.md)

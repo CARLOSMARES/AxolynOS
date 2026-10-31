@@ -5,8 +5,8 @@ a una imagen de bytecode `.axb` que ejecuta la maquina virtual del kernel.
 
 ```
   hola.ax  --[axc]-->  hola.axb  --[VM del kernel]-->  salida
-                    |
-                    +--> axrun (host) para pruebas rapidas
+                |
+                +--> axrun (host) para pruebas rapidas
 ```
 
 * Lenguaje: [09-lenguaje-axolyn.md](09-lenguaje-axolyn.md)
@@ -40,15 +40,15 @@ El compilador se construye como parte de `scripts/build.sh`:
 bash scripts/build.sh compiler
 ```
 
-que produce:
+**Que produce**:
 
 | Artefacto | Que es |
 |---|---|
 | `build/axc` | el compilador |
 | `build/axrun` | el runner de host (enlaza `Kernel/vm/axvm.cpp`) |
 
-`axrun` reutiliza **el mismo fuente de la VM** que el kernel, de modo que una
-prueba que pasa en el host se comporta igual en el sistema.
+`axrun` reutiliza **el mismo fuente de la VM** que el kernel, de modo que
+una prueba que pasa en el host se comporta igual en el sistema.
 
 ## 2. Uso en linea de ordenes
 
@@ -116,7 +116,7 @@ Los tipos de token son:
 | Logica | `AndAnd`, `OrOr`, `Bang` |
 | Punctuacion | `Amp`, `Dot`, `LParen`, `RParen`, `LBrace`, `RBrace`, `LBracket`, `RBracket`, `Comma`, `Semi`, `Colon` |
 
-Reglaslexicas relevantes:
+### Reglas lexicas relevantes:
 
 * Los comentarios son `//` hasta el fin de linea y `/* ... */`.
 * Los enteros son decimales o hexadecimales (`0x1F`).
@@ -124,6 +124,19 @@ Reglaslexicas relevantes:
   `\0` y `\r`.
 * Los identificadores son letras, digitos y `_`, y no pueden empezar por un
   digito.
+
+### Ejemplo: Analisis lexico
+
+```text
+; Entrada: "var x: int = 10;"
+Tokens esperados:
+- KwVar (palabra clave 'var')
+- Ident (identificador 'x')
+- KwInt (palabra clave 'int')
+- Assign (operador '=')
+- IntLit (literal entero '10')
+- Semi (pontuar ';')
+```
 
 ### 3.2 Fase 2: el analizador sintactico (`parser.cpp`)
 
@@ -159,13 +172,29 @@ Los nodos de sentencia son:
 | `ReturnStmt` | `return` |
 | `BreakStmt` / `ContinueStmt` | `break` / `continue` |
 
-Y a nivel de programa: `ImportDecl`, `GlobalDecl`, `FuncDecl`, `StructDef`.
+A nivel de programa: `ImportDecl`, `GlobalDecl`, `FuncDecl`, `StructDef`.
 
 El parser tambien decide la precedencia de operadores, que es:
 
 ```
-postfijo (llamada, indice, punto)  >  unario  >  * / %  >  + -  >
-relacional  >  igualdad  >  &&  >  ||
+postfijo (llamada, indice, punto) > unario > * / % > + - > relacional > igualdad > && > ||
+```
+
+### Ejemplo: Analisis sintactico
+
+```text
+; Entrada: "fn main() { var x: int = 1; }"
+Nodos esperados:
+- FuncDecl (declaracion de funcion 'main')
+  - Parametros: vacio
+  - CUERPO:
+    - BlockStmt (bloque { ... })
+      - VarDeclStmt (var x: int = 0;)
+        - Ident (x)
+        - KwInt (int)
+        - Assign ( = )
+        - IntLit (1)
+        - Semi (;)
 ```
 
 ### 3.3 Fase 3: el analisis semantico (`sema.cpp`)
@@ -188,7 +217,7 @@ generador de codigo. En esta fase:
 7. **Se resuelven las llamadas nativas**: `console.write` se convierte en un
    identificador numerico de la tabla `AX_NT_*`.
 
-Errores que detecta:
+**Errores que detecta**:
 
 * variable no declarada,
 * uso de un `let` como destino de una asignacion,
@@ -198,6 +227,20 @@ Errores que detecta:
 * `return` con valor en una funcion `void` (y al reves),
 * namespace no importado,
 * tipo de struct desconocido.
+
+### Ejemplo: Analisis semantico en accion
+
+```text
+; Entrada: "core.print(42)"
+Errores detectados:
+- Ninguno (si 'core' esta importado)
+- El tipo 42 es compatible (entero)
+- La llamada tiene 1 argumento
+
+; Entrada: "print(sin_importar)"
+Errores detectados:
+- namespace 'sin_importar' no importado
+```
 
 ### 3.4 Fase 4: el generador de codigo (`codegen.cpp`)
 
@@ -213,7 +256,7 @@ Traduce el AST anotado a la imagen AXB. La estructura `BytecodeImage` guarda:
 | `natives` | las funciones nativas usadas y su identificador |
 | `imports` | los namespaces importados y su rango de identificadores |
 
-Convenios de generacion:
+**Convenios de generacion**:
 
 * La pila de la VM es una pila de valores de 8 bytes.
 * Las variables locales viven en el marco de la pila; `AX_OP_LOAD_LOCAL` y
@@ -228,6 +271,18 @@ Convenios de generacion:
   funcion y numero de argumentos). Una llamada nativa, como
   `AX_OP_CALL_NATIVE` (identificador nativo y numero de argumentos).
 
+### Ejemplo: Generacion de bytecode
+
+```text
+; Para el codigo fuente: "fn main() { core.println('hola') }"
+; Se genera el bytecode con:
+; - Cabecera AxbHeader
+; - Tabla de constantes (vacia)
+; - Tabla de strings (la cadena "hola")
+; - Tabla de funciones (main con 0 parametros y 0 locales)
+; - Codigo: carga 'hola' y llama a println
+```
+
 ## 4. La tabla de funciones nativas
 
 El compilador y la VM **comparten los mismos identificadores**. La
@@ -237,8 +292,9 @@ referencia es `Kernel/vm/axvm.h`:
 enum {
     AX_NT_CORE_PRINT      = 1,
     AX_NT_CORE_PRINTLN    = 2,
-    ...
-    AX_NT_TIME_SLEEP      = 23,
+    AX_NT_CORE_PRINT_INT  = 3,
+    AX_NT_CORE_STRLEN     = 4,
+    AX_NT_CORE_INT_TO_STR = 5,
     AX_NT_MAX             = 24
 };
 ```
@@ -265,6 +321,17 @@ El fichero `.axb` guarda, en su tabla de imports, el namespace y el primer
 identificador de cada namespace, de modo que la VM puede resolver
 `ns.fun -> id` sin buscar por nombre.
 
+### Ejemplo: Tabla de natives en el compilador
+
+```cpp
+; En sema.cpp, funcion nativeTable()
+{ "core.print", 1, ..., ... }
+{ "core.println", 2, ..., ... }
+{ "core.print_int", 3, ..., ... }
+{ "core.strlen", 4, ..., ... }
+{ "core.int_to_str", 5, ..., ... }
+```
+
 ## 5. Diagnosticos
 
 Todos los errores se recogen en un vector de `Diag`:
@@ -286,6 +353,26 @@ hola.ax:12:5: error: variable 'x' no declarada
 El compilador **recoge todos los errores** antes de parar (no se detiene en
 el primero), de modo que una sola ejecucion muestra todos los problemas del
 fichero.
+
+### Ejemplo: Diagnosticos en accion
+
+```bash
+$ build/axc mi_programa.ax --dump-ast
+mi_programa.ax:3:2: error: variable 'y' no declarada
+mi_programa.ax:5:1: warning: variable 'z' definida pero no usada
+
+$ build/axc mi_programa.ax -o /dev/null
+Errores: 1
+Warning: 1
+```
+
+Para depurar un caso concreto:
+
+```bash
+build/axc compiladores/axc/tests/fallo.ax --dump-ast
+build/axc compiladores/axc/tests/fallo.ax --dump-bytecode
+build/axrun build/apps/fallo.axb
+```
 
 ## 6. Pruebas
 
@@ -313,10 +400,9 @@ build/axrun build/apps/fallo.axb
 
 1. Anade el token en `lexer.h` (`TokenType`) y su lexema en `lexer.cpp`.
 2. Anade el nodo en `ast.h` (`struct MiSentencia : Stmt`).
-3. Anade la regla en `parser.cpp` (que la consuma) y en `ast.cpp` (si hace
+3. Anade la regla en `parser.cpp` (que la consume) y en `ast.cpp` (si hace
    falta un constructor).
 4. Anade el analisis en `sema.cpp` (`analyzeStatement`).
-5. Anade la generacion en `codegen.cpp` (`genStatement`).
 
 ### 7.2 Una opcode nueva
 
@@ -335,6 +421,27 @@ ajusta solo.
 4. Si es un tipo con representacion en celdas, no hace falta tocar la VM:
    la VM solo ve celdas de 8 bytes.
 
+### Ejemplo: Anadir una sentencia nueva
+
+```text
+; Paso 1: En lexer.h
+token MiSentencia = 100;  // nuevo token type
+
+; Paso 2: En ast.h
+struct MiSentencia : Stmt {
+    string lexema;
+};
+
+; Paso 3: En parser.cpp
+; Agregar regla para consumir la nueva sentencia
+
+; Paso 4: En sema.cpp
+; Agregar analisis: analizeStatement() { /* ... */ }
+
+; Paso 5: En codegen.cpp
+; Agregar generacion: genStatement() { /* ... */ }
+```
+
 ## 8. Resumen de ficheros
 
 | Fichero | Responsabilidad |
@@ -346,3 +453,7 @@ ajusta solo.
 | `include/axc/codegen.h`, `src/codegen.cpp` | AST -> AXB |
 | `src/main.cpp` | linea de ordenes |
 | `src/axrun.cpp` | runner de host |
+
+---
+
+**Siguiente manual**: [12-depuracion.md](12-depuracion.md)

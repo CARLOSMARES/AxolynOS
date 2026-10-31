@@ -10,7 +10,7 @@ Kernel/bootloader/stage2.asm    cargador: modo protegido -> modo largo
 
 ## 1. Stage 1 (512 bytes)
 
-Es el sector que lee la BIOS. Su trabajo es minimo:
+Es el sector que lee la BIOS. Su trabajo es mínimo:
 
 1. Instalar las interrupciones (INT 13h, INT 10h) y guardar la geometria
    del disco con `INT 13h AH=08h`.
@@ -22,7 +22,7 @@ Es el sector que lee la BIOS. Su trabajo es minimo:
    geometria.
 5. Saltar a `0:0x8000`.
 
-Restricciones: debe ocupar **exactamente 512 bytes** y terminar con la
+**Restricciones**: debe ocupar **exactamente 512 bytes** y terminar con la
 firma `0x55 0xAA` en el offset `0x1FE`. El script de compilacion lo
 comprueba:
 
@@ -30,11 +30,27 @@ comprueba:
 [ "$(stat -c%s build/stage1.bin)" -eq 512 ] || echo "stage1 mal dimensionado"
 ```
 
+### Ejemplo: Compilar stage1
+
+```bash
+# Desde la raiz del proyecto
+make bootloader
+# O directamente:
+nasm -f bin Kernel/bootloader/stage1.asm -o build/stage1.bin
+```
+
+### Verificar la firma:
+
+```bash
+xxd build/stage1.bin | head -4
+# Debe verse la firma 55 4AAA al final
+```
+
 ## 2. Stage 2
 
-Ocupa como mucho 63 sectores (LBA 1..63) y hace todo el trabajo real:
+Ocupa como máximo 63 sectores (LBA 1..63) y hace todo el trabajo real:
 
-| Paso | Que hace |
+| Paso | Qué hace |
 |---|---|
 | 1 | Habilita **A20** (`INT 15h AX=2401h`) |
 | 2 | Construye una GDT y pasa a **modo protegido de 32 bits** (`CR0.PE` + salto lejano) |
@@ -46,45 +62,26 @@ Ocupa como mucho 63 sectores (LBA 1..63) y hace todo el trabajo real:
 | 8 | Rellena `AxBootInfo` en `0x1000` |
 | 9 | Salta a `e_entry` del kernel pasando en `RDI` la direccion de `AxBootInfo` |
 
+### Lecturas condicionales
+
 Las lecturas de kernel e initrd usan `read_sectors_staged`, que elige en
 cada momento entre `AH=42h` (LBA) y `AH=02h` (CHS). Es imprescindible en
 SeaBIOS cuando la ISO se arranca como CD-ROM: alli el "disco" emulado solo
 acepta las llamadas antiguas (`AH <= 0x16`). Si `AH=42h` falla, el cargador
 se pasa a CHS para el resto de la carga sin abortar.
 
-La tabla de particiones de `stage1` lleva una entrada valida (tipo `0x83`,
-CHS final 15/15/63, LBA 1..15119) porque SeaBIOS deduce la geometria del
-disco emulado a partir de ella. Sin esa entrada, las lecturas CHS de una
-ISO fallan.
+### Ejemplo: Compilar stage2
 
-### 2.1 Tablas de pagina
-
-```
-PML4  0x70000
-  [0]   -> PDPT_low  0x71000   identidad 0..4 GiB (paginas de 2 MiB)
-  [511] -> PDPT_high 0x72000
-                [0] -> PD_high 0x73000
-                         [16] -> PT 0x74000..   kernel 0xFFFFFFFF80200000 -> 0x200000
+```bash
+nasm -f bin Kernel/bootloader/stage2.asm -o build/stage2.bin
 ```
 
-El kernel tiene **dos** PDPT distintas porque la identidad y el kernel
-alto comparten el indice 0 de PDPT.
+### Verificar tamaño:
 
-El mapa bajo se marca como supervisor (`U/S = 0`): es la tabla que usa el
-proceso durante el arranque. El kernel la reconstruye despues con los
-permisos correctos (user mode).
-
-### 2.2 Modo largo
-
+```bash
+[ "$(stat -c%s build/stage2.bin)" -le 4096 ] || echo "stage2 demasiado grande"
+# stage2 maximo: 63 sectores * 512 bytes = 32256 bytes
 ```
-CR4.PAE = 1, CR4.PSE = 1
-EFER.LME = 1        (MSR 0xC0000080)
-CR3 = PML4
-CR0.PG = 1, CR0.PE = 1
-```
-
-A partir de aqui el codigo se ejecuta en 64 bits con la pila en el modelo
-de segmentos de 64 bits (base 0, limite 2^64-1).
 
 ## 3. Formato de disco (AXDSK)
 
@@ -96,7 +93,7 @@ LBA 64       cabecera del disco (1 sector)
              initrd.axfs (initrd_sectors sectores)
 ```
 
-Cabecera (offsets fijos, todo little-endian):
+### Cabecera del disco (offsets fijos, todo little-endian):
 
 | Offset | Tipo | Contenido |
 |---|---|---|
@@ -115,17 +112,23 @@ Cabecera (offsets fijos, todo little-endian):
 | `0x58` | `u64` | direccion de la tabla E820 (`0x9000`) |
 | `0x60` | `u64` | tamano de la memoria |
 
-La imagen la genera `scripts/tools/mkdisk.cpp`:
+### Ejemplo: Generar la imagen de disco
 
 ```bash
 build/tools/mkdisk --stage1 build/stage1.bin --stage2 build/stage2.bin \
     --kernel build/axolyn.elf --initrd build/initrd.axfs --out build/axolynos.img
 ```
 
+### Verificar la imagen:
+
+```bash
+ls -lh build/axolynos.img
+# Deberia tener un tamaño alrededor de 1.44MB (1474560 bytes)
+```
+
 ## 4. La ISO hibrida (BIOS + UEFI)
 
-`scripts/mkiso.sh` genera una unica ISO que arranca en las dos
-modalidades:
+`scripts/mkiso.sh` genera una unica ISO que arranca en las dos modalidades:
 
 * **BIOS/Legacy**: El Torito en modo "hard disk" sobre
   `build/axolynos.img`. El BIOS emula un disco y ejecuta el MBR de la
@@ -133,6 +136,8 @@ modalidades:
 * **UEFI x86-64**: una imagen FAT con `EFI/BOOT/BOOTX64.EFI` (el cargador
   UEFI), `EFI/AXOLYNOS/axolyn.elf` e `initrd.axfs`, publicada como
   particion EFI (El Torito + tabla GPT).
+
+### Estructura de la ISO:
 
 ```
 build/AxolynOS.iso
@@ -143,13 +148,24 @@ build/AxolynOS.iso
         └── AXOLYNOS/{axolyn.elf, initrd.axfs}
 ```
 
-El cargador UEFI usa los servicios de arranque para leer el kernel y el
-initrd desde la particion FAT y despues salta al kernel con la misma
-`AxBootInfo` que usa la ruta BIOS. El ELF del kernel se convierte a PE32+
-con `scripts/elf2efi.py` (sin definir `GNU_EFI_USE_MS_ABI`).
+### Ejemplo: Generar la ISO
 
 ```bash
 bash scripts/build.sh iso
+# O manualmente:
+build/tools/mkiso.sh -o build/AxolynOS.iso
+```
+
+### Probar ambas rutas:
+
+```bash
+# BIOS (ruta tradicional)
+bash scripts/run.sh --headless
+
+# UEFI
+qemu-system-x86_64 -machine q35 -bios /usr/share/qemu/OVMF.fd \
+    -cdrom build/AxolynOS.iso -boot d -m 512 \
+    -display none -serial stdio
 ```
 
 ## 5. El kernel recibe la informacion
@@ -173,22 +189,46 @@ typedef struct {
 `_start` (en `Kernel/src/boot.S`) la copia a una variable del kernel y
 la pasa a `kmain()`.
 
+### Ejemplo: Estructura AxBootInfo en memoria
+
+```bash
+# En GDB, después de arrancar:
+info p AxBootInfo
+# Deberia mostrar los campos cargados por el bootloader
+```
+
 ## 6. Probando el arranque
+
+### BIOS:
 
 ```bash
 bash scripts/build.sh bootloader
 xxd build/stage1.bin | head -4          # debe verse la firma al final
-bash scripts/run.sh --headless          # log serie en la terminal
-
-# BIOS y UEFI desde la misma ISO
-bash scripts/build.sh iso
-bash scripts/run.sh --headless                       # BIOS
-qemu-system-x86_64 -machine q35 -bios /usr/share/qemu/OVMF.fd \
-    -cdrom build/AxolynOS.iso -boot d -m 512 \
-    -display none -serial stdio                      # UEFI
+bash scripts/run.sh          # log serie en la terminal
 ```
 
-Si el sistema no arranca, el log serie estara vacio: eso significa que
-el problema esta antes del kernel (stage1/stage2). Si aparece el banner
-del kernel pero luego se reinicia, el problema esta en el paso a modo
-largo o en las tablas de pagina.
+### BIOS headless (solo serie):
+
+```bash
+bash scripts/run.sh --headless
+```
+
+### UEFI:
+
+```bash
+bash scripts/build.sh iso
+qemu-system-x86_64 -machine q35 -bios /usr/share/qemu/OVMF.fd \
+    -cdrom build/AxolynOS.iso -boot d -m 512 \
+    -display none -serial stdio
+```
+
+### Si el sistema no arranca:
+
+* Si el log serie está vacío: el problema está antes del kernel
+  (stage1/stage2).
+* Si aparece el banner del kernel pero luego se reinicia: el problema
+  está en el paso a modo largo o en las tablas de pagina.
+
+---
+
+**Siguiente manual**: [04-el microkernel](04-kernel-microkernel.md)

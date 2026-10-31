@@ -9,20 +9,20 @@ de usuario (`apis/`).
 
 ```
 user mode                          ring 0
----------                          ------
+--------                          ------
 mov rax, AX_SYS_WRITE              int 0x80
 mov rdi, 1                         |
 mov rsi, buffer                    |  trampolin (isr_stubs.S)
 mov rdx, len                       |  guarda registros, cambia a la pila
-                                   |  del kernel
-                                   v
-                                   ax_syscall_entry(nr, args)
-                                   |  ax_syscall_dispatch(nr, args)
-                                   v
-                                   handler de la tabla
-                                   |
-                                   v
-                                   RAX = valor de retorno
+                                    |  del kernel
+                                    v
+                                    ax_syscall_entry(nr, args)
+                                    |  ax_syscall_dispatch(nr, args)
+                                    v
+                                    handler de la tabla
+                                    |
+                                    v
+                                    RAX = valor de retorno
 ```
 
 El vector `0x80` se instala en la IDT con **DPL 3**, que es lo que
@@ -30,7 +30,19 @@ permite que el codigo de usuario lo ejecute. El trampolin cambia a la
 pila del kernel usando la variable global `ax_kernel_stack_top`, que el
 planificador actualiza en cada cambio de contexto.
 
-### Convencion de registros
+### Ejemplo: Ejecutar una syscall en assembly
+
+```asm
+; Ejemplo: ax_syscall3(AX_SYS_WRITE, 1, buffer, len)
+mov rax, AX_SYS_WRITE    ; RAX = numero de syscall
+mov rdi, 1               ; RDI = fd (1 = stdout)
+mov rsi, buffer          ; RSI = buffer address
+mov rdx, len             ; RDX = length
+int 0x80                 ; Llamar al kernel
+; Resultado: RAX = bytes escritos (o -errno en error)
+```
+
+## 2. Convencion de registros
 
 | Registro | Uso |
 |---|---|
@@ -45,14 +57,50 @@ planificador actualiza en cada cambio de contexto.
 `RBX`, `RBP` y `R12`-`R15` se conservan: el trampolin los guarda y los
 restaura.
 
-### Valores de retorno
+### Ejemplo: Preservar registros en ensamblador
+
+```asm
+; Al inicio de handler de syscall
+push rbx
+push rbp
+push r12
+push r15
+; ... hacer trabajo ...
+pop r15
+pop r12
+pop rbp
+pop rbx
+; Retornar con valor en RAX
+ret
+```
+
+## 3. Valores de retorno
 
 * `>= 0`: exito (el significado depende de la llamada).
 * `< 0`: error. El valor es uno de los codigos `AX_E*` de
   `apis/include/axos/abi.h`, que ya estan definidos como negativos
   (`AX_ENOENT = -1`, `AX_EINVAL = -3`, ...).
 
-## 2. Tabla completa
+### Ejemplo: Manejo de retorno
+
+```c
+int fd = ax_syscall2(AX_SYS_OPEN, (uint64_t)"/apps/hello.axb", AX_O_RDONLY);
+if (fd < 0) {
+    // Error: fd es negativo, es -errno
+    // Puedo convertirlo con: int errno = -fd;
+    sdk_print("Error al abrir archivo: %d\n", -fd);
+} else {
+    // Exito: fd es el descriptor
+    char buf[64];
+    int n = ax_syscall3(AX_SYS_READ, fd, (uint64_t)buf, 64);
+    if (n > 0) {
+        // Leidos n bytes
+    }
+    ax_syscall1(AX_SYS_CLOSE, fd);
+}
+```
+
+## 4. Tabla completa de syscalls
 
 | Numero | Nombre | Argumentos | Retorno |
 |---|---|---|---|
@@ -93,10 +141,36 @@ restaura.
 | 34 | `AX_SYS_SIGSEND` | `pid, sig` | 0 o error |
 | 35 | `AX_SYS_SIGPENDING` | `sig` (0 = mascara) | 1/0 o mascara |
 
-Los numeros **100 en adelante** estan reservados para los modulos del
-kernel (ver [05-modulos.md](05-modulos.md)).
+### Ejemplo: Usar syscalls basicas
 
-## 3. Codigos de error
+```c
+#include <axos/syscall.h>
+
+// Escribir "Hola" en stdout
+void write_hello(void) {
+    ax_syscall3(AX_SYS_WRITE, 1, (uint64_t)"Hola\n", 5);
+}
+
+// Leer de stdin (entrada estandar, fd=0)
+void read_stdin(void) {
+    char buf[64];
+    int n = ax_syscall3(AX_SYS_READ, 0, (uint64_t)buf, 64);
+    // buf ahora tiene lo que se leyera (hasta 63 bytes + terminador)
+}
+```
+
+### Ejemplo: Sleep y Time
+
+```c
+// Dormir 1000 ms (1 segundo)
+ax_syscall1(AX_SYS_SLEEP, 1000);
+
+// Obtener tiempo desde el arranque
+uint64_t uptime = ax_syscall0(AX_SYS_TIME);
+// uptime tiene milisegundos desde el arranque del sistema
+```
+
+## 5. Codigos de error
 
 | Constante | Valor | Significado |
 |---|---|---|
@@ -114,7 +188,24 @@ kernel (ver [05-modulos.md](05-modulos.md)).
 | `AX_ENOSYS` | -11 | syscall no implementada |
 | `AX_ERANGE` | -12 | fuera de rango |
 
-## 4. Ficheros
+### Ejemplo: Manejo de errores
+
+```c
+int fd = ax_syscall2(AX_SYS_OPEN, (uint64_t"/nonexistent", AX_O_RDONLY);
+if (fd < 0) {
+    // Manejar error
+    int errno = -fd;  // Convertir a errno positivo
+    if (errno == AX_ENOENT) {
+        sdk_print("El archivo no existe\n");
+    } else if (errno == AX_EACCES) {
+        sdk_print("No hay permisos\n");
+    } else {
+        sdk_print("Error desconocido: %d\n", errno);
+    }
+}
+```
+
+## 6. Ficheros
 
 Los descriptores `0`, `1` y `2` son la entrada, salida y error estandar
 (la consola). Los demas se abren con `AX_SYS_OPEN` sobre el initrd, que
@@ -127,21 +218,56 @@ int n = ax_syscall3(AX_SYS_READ, fd, (uint64_t)buf, 64);
 ax_syscall1(AX_SYS_CLOSE, fd);
 ```
 
-## 5. Procesos
+### Ejemplo: Leer archivo del initrd
+
+```c
+void leer_archivo(void) {
+    int fd = ax_syscall2(AX_SYS_OPEN, (uint64_t)"/apps/hello.axb", AX_O_RDONLY);
+    if (fd < 0) {
+        sdk_print("No se pudo abrir el archivo\n");
+        return;
+    }
+    
+    char buf[128];
+    int n = ax_syscall3(AX_SYS_READ, fd, (uint64_t)buf, 128);
+    if (n > 0) {
+        sdk_print("Contenido: %.*s\n", n, buf);
+    }
+    
+    ax_syscall1(AX_SYS_CLOSE, fd);
+}
+```
+
+## 7. Procesos
 
 ```c
 char* argv[] = { "calc", "2+2", 0 };
-int pid = ax_syscall3(AX_SYS_SPAWN, (uint64_t)"/apps/calc.elf", (uint64_t)argv, 2);
+int pid = ax_syscall3(AX_SYS_SPAWN, (uint64_t)"/apps/calc.elf", 
+                     (uint64_t)argv, 2);
 int status = ax_syscall1(AX_SYS_WAIT, pid);
 ```
 
 La aplicacion hijo corre en su propio hilo con su propia pila de usuario;
 `AX_SYS_WAIT` bloquea al padre hasta que el hijo termina.
 
+### Ejemplo: Spawn y wait
+
+```c
+// Lanzar calculadora
+char* args[] = { "calc", "2+2", NULL };
+int pid = ax_syscall3(AX_SYS_SPAWN, (uint64_t)"/apps/calc.elf", 
+                     (uint64_t)args, 2);
+
+// Esperar a que termine
+int status;
+ax_syscall1(AX_SYS_WAIT, pid);
+// status tiene el codigo de salida (0 si 2+2=4)
+```
+
 ## 6. Senales
 
 Las senales se implementan con una mascara de bits por hilo
-(`AxThread::sig_pending`, `sig_taken` y `sig_handlers`).  Las constantes
+(`AxThread::sig_pending`, `sig_taken` y `sig_handlers`). Las constantes
 coinciden con POSIX:
 
 | Senal | Numero |
@@ -154,38 +280,54 @@ coinciden con POSIX:
 | `AX_SIGTERM` | 15 |
 | `AX_SIGCHLD` / `AX_SIGCONT` / `AX_SIGSTOP` | 17 / 18 / 19 |
 
-`AX_SYS_SIGNAL` instala la accion del proceso actual:
+### Ejemplo: Ignorar Ctrl+C
 
 ```c
-ax_syscall2(AX_SYS_SIGNAL, AX_SIGINT, AX_SIG_IGN);   // ignorar Ctrl+C
-ax_syscall2(AX_SYS_SIGNAL, AX_SIGINT, AX_SIG_DFL);   // accion por defecto
-ax_syscall2(AX_SYS_SIGNAL, AX_SIGTERM, (long)mi_handler);
+// Ignorar Ctrl+C durante una seccion critica
+ax_syscall2(AX_SYS_SIGNAL, AX_SIGINT, AX_SIG_IGN);
+
+// Restaurar handler por defecto
+ax_syscall2(AX_SYS_SIGNAL, AX_SIGINT, AX_SIG_DFL);
 ```
 
-* `AX_SIG_DFL`: termina el proceso.  Para `SIGINT` el codigo de salida es
-  `130`.
-* `AX_SIG_IGN`: descarta la senal.
-* Cualquier otro valor se guarda como direccion de un manejador de user
-  mode.  El kernel **no** cambia de contexto a ring 3 para ejecutarlo: la
-  espera de consola se interrumpe y devuelve `AX_EINTR`, y la aplicacion
-  consulta la senal con `AX_SYS_SIGPENDING`.
+### Ejemplo: Manejo de senal en loop
 
 ```c
-long n = ax_syscall3(AX_SYS_READ, 0, (long)buf, sizeof(buf));
+void main_loop(void) {
+    for (;;) {
+        // Hacer trabajo...
+        
+        // Verificar si hay senal pendiente
+        if (ax_syscall1(AX_SYS_SIGPENDING, AX_SIGINT)) {
+            // Ctrl+C recibido
+            sdk_print("Interrumpido!\n");
+            break;  // Salir del loop
+        }
+    }
+}
+```
+
+### Ejemplo: Leer despues de senal
+
+```c
+char buf[128];
+int n = ax_syscall3(AX_SYS_READ, 0, (uint64_t)buf, 128);
 if (n == AX_EINTR) {
+    // La lectura fue interrumpida por una senal
     if (ax_syscall1(AX_SYS_SIGPENDING, AX_SIGINT)) {
-        /* Ctrl+C recibido: limpiar y continuar o salir */
+        // Ctrl+C fue recibido
+        sdk_print("Fueron interruptido\n");
     }
 }
 ```
 
 `AX_SYS_SIGPENDING` con `sig = 0` devuelve la mascara completa (bit 0 =
-senal 1).  Con `sig > 0` devuelve 1 y consume la senal entregada, o 0 si
+senal 1). Con `sig > 0` devuelve 1 y consume la senal entregada, o 0 si
 no estaba pendiente.
 
 Ctrl+C en la consola se traduce en `AX_SIGINT` para el proceso en primer
-plano (`ax_signal_set_foreground`).  El shell lo fija antes de esperar a
-una aplicacion y lo limpia al recuperar el prompt.  `AX_SYS_SIGSEND`
+plano (`ax_signal_set_foreground`). El shell lo fija antes de esperar a
+una aplicacion y lo limpia al recuperar el prompt. `AX_SYS_SIGSEND`
 permite enviar una senal a otro pid; `SIGKILL` termina el proceso de
 inmediato y el resto queda pendiente hasta que vuelva a ejecutarse.
 
@@ -197,25 +339,41 @@ inmediato y el resto queda pendiente hasta que vuelva a ejecutarse.
 
 1. Anade el numero a `enum { AX_SYS_* }` en `apis/include/axos/abi.h`
    (al final, para no renumerar las existentes).
+
 2. Implementa el handler en `Kernel/src/syscall.cpp`:
 
-   ```cpp
-   static int sys_ax_ejemplo(uint64_t* args, uint64_t* ret)
-   {
-       uint64_t valor = args[0];
-       *ret = valor * 2;
-       return 0;
-   }
-   ```
+```cpp
+static int sys_ax_ejemplo(uint64_t* args, uint64_t* ret)
+{
+    uint64_t valor = args[0];
+    *ret = valor * 2;
+    return 0;
+}
+```
 
 3. Registralo en `ax_syscall_init()`:
 
-   ```cpp
-   ax_syscall_register(AX_SYS_EJEMPLO, sys_ax_ejemplo);
-   ```
+```cpp
+ax_syscall_register(AX_SYS_EJEMPLO, sys_ax_ejemplo);
+```
 
 4. Añade el wrapper en `apis/include/axos/syscall.h` y, si conviene, una
    funcion de alto nivel en `apis/src/`.
 
 Los modulos pueden registrar syscalls en el mismo espacio de numeros
 (`ax_syscall_register`) sin tocar el kernel.
+
+### Ejemplo: Anadir una syscall personalizada desde un modulo
+
+```cpp
+// En el modulo kernel _ax_module_entry
+ctx->register_syscall(120, mi_syscall);
+
+// Despues, desde user mode
+long ret = ax_syscall6(120, 42, 0, 0, 0, 0, 0);
+// Ret = 84 (42 * 2)
+```
+
+---
+
+**Siguiente manual**: [07-APIs-de-usuario](07-apis.md)

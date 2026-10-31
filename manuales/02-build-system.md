@@ -5,11 +5,14 @@ scripts de build intermedios: las reglas invocan directamente
 `gcc`, `g++`, `as`, `ld`, `ar`, `nasm`, `python3`, `mkfs.vfat`, `mcopy` y
 `xorriso`.
 
-## 1. Make
+## 1. Make (compilador principal)
+
+El `Makefile` está en la raíz del proyecto y coordina todo el build. Los
+objetivos más usados son:
 
 ```bash
 make                # todo: ISO híbrida BIOS + UEFI
-make -j$(nproc)     # en paralelo
+make -j$(nproc)     # en paralelo (usa todos los núcleos)
 make kernel         # solo build/axolyn.elf
 make image          # solo build/axolynos.img
 make iso            # solo build/AxolynOS.iso
@@ -17,11 +20,66 @@ make clean          # borra build/
 make help           # lista completa de objetivos
 ```
 
-Objetivos: `all`, `bootloader`, `tools`, `compiler`, `kernel`, `modules`,
-`lib`, `apps`, `initrd`, `image`, `uefi`, `iso`, `run`, `run-headless`,
-`run-install`, `run-disk`, `clean`, `help`.
+### Objetivos principales del Makefile:
 
-## 2. CMake
+| Objetivo | Qué hace |
+|---|---|
+| `all` | Compila todo: bootloader, kernel, módulos, apps, initrd e ISO |
+| `bootloader` | Compila stage1.bin y stage2.asm |
+| `kernel` | Compila el kernel (g++ + as + ld) |
+| `modules` | Compila todos los módulos .axmod |
+| `apps` | Compila aplicaciones nativas y empaqueta .axe/.axe |
+| `initrd` | Construye initramfs AXFS |
+| `iso` | Genera la ISO híbrida BIOS+UEFI |
+| `run` | Arranca QEMU con la ISO |
+| `run-headless` | Arranca QEMU con salida serie |
+| `clean` | Borra el directorio build/ |
+
+### Banderas del kernel (en CMake y Make):
+
+```
+-std=gnu++17 -O2 -g
+-ffreestanding -nostdlib -fno-exceptions -fno-rtti
+-mno-red-zone -mcmodel=kernel -fno-pic -fno-pie
+-fno-stack-protector -fno-asynchronous-unwind-tables
+-I Kernel/include -I Kernel/vm -I apis/include
+```
+
+### Banderas de user mode (aplicaciones):
+
+```
+-std=gnu++17 -O2 -ffreestanding -nostdlib -fno-exceptions -fno-rtti
+-mno-red-zone -fPIE -fno-stack-protector
+```
+
+### Ejemplo: Compilar solo el kernel
+
+```bash
+make kernel
+# Resultado: build/axolyn.elf
+```
+
+### Ejemplo: Compilar aplicaciones
+
+```bash
+make apps
+# Resultado: build/apps/*.elf y build/apps/*.axe
+```
+
+### Ejemplo: Generar la ISO
+
+```bash
+make iso
+# Resultado: build/AxolynOS.iso (arrancable BIOS y UEFI)
+```
+
+### Ejemplo: Limpiar y reconstruir desde cero
+
+```bash
+make clean && make -j$(nproc)
+```
+
+## 2. CMake (compilador alternativo)
 
 ```bash
 cmake -S . -B cmake-build -DCMAKE_BUILD_TYPE=Release
@@ -29,9 +87,15 @@ cmake --build cmake-build -j$(nproc)
 ```
 
 Los artefactos se generan en `cmake-build/build/` con la misma estructura que
-`build/`.
+`build/`. Útil para quienes prefieren CMake sobre Make.
 
-## 3. Toolchains
+### Diferencias con Make:
+
+- CMake no tiene tantos objetivos personalizados como Make
+- La estructura de directorios es idéntica
+- Ambos producen ISO y disco image limpio
+
+## 3. Toolchains (cadena de herramientas)
 
 | Pieza | Herramienta | Salida |
 |---|---|---|
@@ -45,7 +109,7 @@ Los artefactos se generan en `cmake-build/build/` con la misma estructura que
 
 ### 3.1 Banderas del kernel
 
-```
+```bash
 -std=gnu++17 -O2 -g
 -ffreestanding -nostdlib -fno-exceptions -fno-rtti
 -mno-red-zone -mcmodel=kernel -fno-pic -fno-pie
@@ -53,26 +117,26 @@ Los artefactos se generan en `cmake-build/build/` con la misma estructura que
 -I Kernel/include -I Kernel/vm -I apis/include
 ```
 
-Enlazado:
-
-```
-ld -T Kernel/linker/kernel.ld -z max-page-size=0x1000 --no-dynamic-linker
-```
-
-`Kernel/linker/kernel.ld` coloca `.text` en `0xFFFFFFFF80200000` y usa `AT()`
-para que las cabeceras ELF contengan la dirección física `0x200000`, que es la
-que usa el bootloader para copiar el kernel a memoria.
-
 ### 3.2 Banderas de user mode
 
-```
+```bash
 -std=gnu++17 -O2 -ffreestanding -nostdlib -fno-exceptions -fno-rtti
 -mno-red-zone -fPIE -fno-stack-protector
 ```
 
-Enlazado:
+### Ejemplo de enlazado del kernel:
 
+```bash
+ld -T Kernel/linker/kernel.ld -z max-page-size=0x1000 --no-dynamic-linker
 ```
+
+`Kernel/linker/kernel.ld` coloca `.text` en `0xFFFFFFFF80200000` y usa
+`AT()` para que las cabeceras ELF contengan la dirección física
+`0x200000`, que es la que usa el bootloader para copiar el kernel a memoria.
+
+### Ejemplo de enlazado de aplicaciones user mode:
+
+```bash
 g++ -fPIE -pie -nostdlib -Wl,--build-id=none -Wl,--no-dynamic-linker \
     -Wl,-T,apis/linker/userspace.ld -Wl,--undefined=_start
 ```
@@ -96,29 +160,51 @@ relocalizaciones `R_X86_64_RELATIVE`.
 El `Makefile` y `CMakeLists.txt` compilan automáticamente todos los `.cpp` de
 `tools/`.
 
-## 5. Pipeline
+## 5. Pipeline de compilación
 
 ```
 Kernel/src/*.cpp + *.S + Kernel/vm/*.cpp
-        |  g++ / as --64
-        v
-   build/obj/kernel/*.o
-        |  ld -T kernel.ld
-        v
-   build/axolyn.elf ─────────────────────────┐
-                                             |
+      |  g++ / as --64
+      v
+build/obj/kernel/*.o
+      |  ld -T kernel.ld
+      v
+build/axolyn.elf ─────────────────────────┐
+                                           |
 Kernel/modules/*/  ──> ld + mkmod ──> .axmod ─┤
-                                             |
+                                           |
 apis/src/*.cpp  ──> ar ──> libaxos.a ──> mkaxl ──> libaxos.axl
-                                             |
+                                           |
 apps/native/*.cpp ──> g++ -pie ──> .elf ──> mkaxe ──> .axe
 apps/axolyn/*.ax  ──> axc ──> .axb ──────────┤
-                                             |
-                        mkinitramfs ──> build/initrd.axfs
-                                             |
+                                           |
+                         mkinitramfs ──> build/initrd.axfs
+                                           |
 stage1.bin + stage2.bin + axolyn.elf + initrd ──> mkdisk ──> axolynos.img
-                                             |
+                                           |
 BOOTX64.EFI + partición FAT + El Torito ─────┴──> AxolynOS.iso
+```
+
+### Ejemplo de pipeline completo:
+
+```bash
+# 1. Compilar kernel
+make kernel
+
+# 2. Compilar módulos
+make modules
+
+# 3. Compilar aplicaciones nativas
+make apps
+
+# 4. Construir initrd
+make initrd
+
+# 5. Generar ISO
+make iso
+
+# 6. Arrancar
+make run
 ```
 
 ## 6. Añadir un fichero nuevo al kernel
@@ -130,28 +216,28 @@ BOOTX64.EFI + partición FAT + El Torito ─────┴──> AxolynOS.iso
 4. Si el subsistema debe arrancar, llama a su `init` desde `kmain()` en
    `Kernel/src/kernel.cpp`.
 
-## 7. Depuración
+### Ejemplo: Añadir un nuevo subsistema
 
-```bash
-readelf -h build/axolyn.elf
-readelf -l build/axolyn.elf
-nm build/axolyn.elf | head -40
-less build/axolyn.elf.map
+```cpp
+// Kernel/src/mi_sistema.cpp
+#include "ax_sistema.h"
 
-# recompilar un solo fichero
-g++ -std=gnu++17 -O2 -ffreestanding -nostdlib -fno-exceptions -fno-rtti \
-    -mno-red-zone -mcmodel=kernel -fno-pic -fno-pie \
-    -I Kernel/include -I Kernel/vm -I apis/include \
-    -c Kernel/src/kernel.cpp -o /tmp/kernel.o
+// Implementar funciones del subsistema...
+
+// En kernel.cpp, llamar a mi_sistema_init() en el orden adecuado
 ```
 
-## 8. Problemas frecuentes
+## 7. Problemas frecuentes
 
 | Síntoma | Causa | Solución |
 |---|---|---|
 | `undefined reference to __udivdi3` | división de 64 bits sin libgcc | evita `/` y `%` de 64 bits en el kernel |
 | `relocation truncated to fit` | dirección fuera de rango | usa `-mcmodel=kernel` |
-| `nasm: unrecognized directive [org]` | ensamblar un `.asm` con `-f elf64` | el bootloader se ensambla con `nasm -f bin` |
+| `nasm: unrecognized directive [org]` | ensamblar un `.asm` con `-f bin` | el bootloader se ensambla con `nasm -f bin` |
 | QEMU no muestra nada con `-nographic` | el firmware escribe en VGA | usa también `-serial stdio`; el kernel duplica la salida a COM1 |
 | `Could not open ...iso` | la ISO no se generó | ejecuta `make iso` y comprueba `ls build/AxolynOS.iso` |
 | `-cdrom build/axolynos.img` falla | `-cdrom` solo acepta ISO | usa `-drive format=raw,file=build/axolynos.img` |
+
+---
+
+**Siguiente manual**: [03-el bootloader](03-bootloader.md)
