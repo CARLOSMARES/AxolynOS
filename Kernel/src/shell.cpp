@@ -425,6 +425,7 @@ static void cmd_help(void)
     ax_puts("  mkdir <dir>       crea un directorio\n");
     ax_puts("  rmdir <dir>       borra un directorio vacio\n");
     ax_puts("  date / time       fecha y hora de la CMOS\n");
+    ax_puts("  type <fich> / cat <fich>  muestra un fichero\n");
     ax_puts("  echo <texto>      escribe texto\n");
     ax_puts("  ver               version del sistema\n");
     ax_puts("\neditores:\n");
@@ -2228,6 +2229,7 @@ static void shell_execute(char* line)
     else if (shell_streq(cmd, "cd"))     cmd_cd(args, count);
     else if (shell_streq(cmd, "pwd"))    cmd_pwd();
     else if (shell_streq(cmd, "type"))   cmd_type(args, count);
+    else if (shell_streq(cmd, "cat"))    cmd_type(args, count);
     else if (shell_streq(cmd, "copy"))   cmd_copy(args, count);
     else if (shell_streq(cmd, "ren"))    cmd_ren(args, count);
     else if (shell_streq(cmd, "del"))    cmd_del(args, count);
