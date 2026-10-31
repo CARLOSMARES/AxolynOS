@@ -1268,26 +1268,74 @@ static void cmd_dir(char** args, size_t count)
     ax_puts(" bytes libres\n");
 }
 
+/* Comprueba en el VFS (initrd) si una ruta ya normalizada es un directorio. */
+static bool shell_vfs_is_dir(const char* path)
+{
+    size_t plen = 0;
+    const char* p = path;
+    if (p[0] == '/') {
+        p++;
+    }
+    while (p[plen]) {
+        plen++;
+    }
+    uint32_t total = ax_vfs_count();
+    for (uint32_t i = 0; i < total; ++i) {
+        const AxfsEntry* e = ax_vfs_entry(i);
+        if (!e || e->type != AXFS_TYPE_DIR) {
+            continue;
+        }
+        const char* nm = e->name;
+        size_t n = 0;
+        while (nm[n] && nm[n] != '/') {
+            n++;
+        }
+        if (n != plen) {
+            continue;
+        }
+        bool match = true;
+        for (size_t k = 0; k < plen; ++k) {
+            if (shell_upper((char)path[1 + k]) != shell_upper(nm[k])) {
+                match = false;
+                break;
+            }
+        }
+        if (match) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void cmd_cd(char** args, size_t count)
 {
-    if (!ax_fs_disk_mounted()) {
-        ax_puts("cd: no hay volumen AxFS montado\n");
-        return;
-    }
     char path[160];
     shell_resolve(count >= 2 ? args[1] : "/", path, sizeof(path));
+
     if (!shell_path_is_root(path)) {
-        uint32_t type = 0;
-        int rc = ax_fs_disk_stat(path, &type, nullptr);
-        if (rc != 0) {
-            shell_error("cd: no existe", rc);
+        bool ok = false;
+        bool is_dir = false;
+        if (ax_fs_disk_mounted()) {
+            uint32_t type = 0;
+            if (ax_fs_disk_stat(path, &type, nullptr) == 0) {
+                is_dir = (type == AXFS_DISK_TYPE_DIR);
+                ok = true;
+            }
+        } else if (ax_vfs_exists(path)) {
+            /* Sin disco montado el sistema de ficheros activo es el initrd. */
+            is_dir = shell_vfs_is_dir(path);
+            ok = true;
+        }
+        if (!ok) {
+            shell_error("cd: no existe", -1);
             return;
         }
-        if (type != AXFS_DISK_TYPE_DIR) {
+        if (!is_dir) {
             ax_puts("cd: no es un directorio\n");
             return;
         }
     }
+
     size_t i = 0;
     while (path[i] && i + 1 < sizeof(g_cwd)) {
         g_cwd[i] = path[i];
