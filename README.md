@@ -282,3 +282,23 @@ AxolynOS/
   `nasm -f bin`.
 - La ISO es híbrida: El Torito BIOS sobre `axolynos.img` y partición EFI FAT
   con `BOOTX64.EFI`.
+
+### Manuales
+
+| # | Manual | Descripción |
+|---|---|---|
+| 00 | [Indice](manuales/00-indice.md) | Directorio y resumen general |
+| 01 | [Arquitectura del sistema](manuales/01-arquitectura.md) | Vision general, mapa de memoria y subsistemas |
+| 02 | [Sistema de compilacion](manuales/02-build-system.md) | Make y CMake, objetivos y artefactos |
+| 03 | [El bootloader](manuales/03-bootloader.md) | Stage1, stage2 y arranque BIOS/UEFI |
+| 04 | [El microkernel](manuales/04-kernel-microkernel.md) | Nucleo, planificador, memoria y hilos |
+| 05 | [Modulos del kernel](manuales/05-modulos.md) | Crear, cargar y publicar modulos `.axmod` |
+| 06 | [Llamadas al sistema](manuales/06-syscalls.md) | API de syscalls y ejemplos de uso |
+| 07 | [APIs de usuario](manuales/07-apis.md) | Uso de `libaxos` para aplicaciones |
+| 08 | [Crear aplicaciones](manuales/08-crear-aplicaciones.md) | Aplicaciones nativas `.cpp` y bytecode `.ax` |
+| 09 | [Lenguaje Axolyn](manuales/09-lenguaje-axolyn.md) | Sintaxis y ejemplos del lenguaje propio |
+| 10 | [Bytecode y maquina virtual](manuales/10-bytecode-vm.md) | VM interna y ejecucion de bytecode |
+| 11 | [El compilador axc](manuales/11-compilador.md) | Compilador propio `axc` y flujo de trabajo |
+| 12 | [Depuracion](manuales/12-depuracion.md) | Herramientas y técnicas de debug |
+| 13 | [Servicios](manuales/13-servicios.md) | Gestor de servicios del sistema, registro y autostart |
+```
