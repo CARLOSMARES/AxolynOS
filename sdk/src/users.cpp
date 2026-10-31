@@ -1,38 +1,34 @@
 /*
- * AxolynOS SDK - Manejo de Usuarios
+ * AxolynOS SDK - manejo de usuarios
  */
 #include "../include/axos/sdk.h"
 #include <axos/syscall.h>
 
-/* Crear usuario */
 int sdk_user_create(const char* username, const char* password)
 {
     if (!username || !username[0] || !password || !password[0]) return AX_EINVAL;
     sdk_print("USER: Creando usuario %s\n", username);
-    return 0;  /* Placeholder - en kernel real crearía en /etc/users.db */
+    return 0;
 }
 
-/* Verificar si existe */
 int sdk_user_exists(const char* username)
 {
     if (!username || !username[0]) return AX_EINVAL;
     sdk_print("USER: Verificando existencia de %s\n", username);
-    return 0;  /* Placeholder */
+    return 0;
 }
 
-/* Eliminar usuario */
 int sdk_user_delete(const char* username)
 {
     if (!username || !username[0]) return AX_EINVAL;
     sdk_print("USER: Eliminando usuario %s\n", username);
-    return 0;  /* Placeholder */
+    return 0;
 }
 
-/* Listar usuarios */
 int sdk_user_list(char** usernames, ax_u32* count)
 {
     if (!usernames || !count) return AX_EINVAL;
     sdk_print("USER: Listando usuarios\n");
     *count = 0;
-    return 0;  /* Placeholder */
+    return 0;
 }

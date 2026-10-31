@@ -3,7 +3,7 @@
  */
 #include "../include/axos/sdk.h"
 
-/* Concatenar src al final de dest, maximo max caracteres incluidos el terminador nulo */
+/* Concatenar src al final de dest, maximo max caracteres incluido el terminador nulo */
 int sdk_string_concatenar(char* dest, ax_u32 max, const char* src)
 {
     if (!dest || !src || max == 0) return -1;

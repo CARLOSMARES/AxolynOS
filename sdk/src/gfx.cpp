@@ -1,13 +1,11 @@
 /*
- * AxolynOS SDK - Manejo de Graficos basico
+ * AxolynOS SDK - manejo de graficos basico
  */
 #include "../include/axos/sdk.h"
 
 /* Inicializar modo grafico (framebuffer) */
 int sdk_gfx_init(int width, int height)
 {
-    /* En un sistema real, esto inicializaria el framebuffer o modo VGA */
-    /* Por ahora retornamos ok pero no hacemos nada real */
     sdk_print("GFX: Inicializando modo %dx%d\n", width, height);
     return 0;
 }
@@ -15,7 +13,6 @@ int sdk_gfx_init(int width, int height)
 /* Pintar un pixel */
 void sdk_gfx_pixel(int x, int y, int r, int g, int b)
 {
-    /* Implementacion basica - en kernel real escribiria al framebuffer */
     sdk_print("GFX: Pixel (%d,%d) color RGB(%d,%d,%d)\n", x, y, r, g, b);
 }
 

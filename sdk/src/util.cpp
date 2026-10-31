@@ -1,5 +1,5 @@
 /*
- * AxolynOS SDK - Utilidades varias
+ * AxolynOS SDK - utilidades varias
  */
 #include "../include/axos/sdk.h"
 
@@ -8,7 +8,7 @@ int sdk_strnlen(const char* s, int max)
 {
     int len = 0;
     if (!s) return 0;
-    while (s[len] && len < max) {
+    while (len < max && s[len]) {
         ++len;
     }
     return len;
@@ -60,7 +60,6 @@ int sdk_int_to_str(int val, char* buf, int max)
         return -1;
     }
     
-    // Digitos en reverse
     int digits[32];
     int dcount = 0;
     while (val > 0 && dcount < 32) {
@@ -68,7 +67,6 @@ int sdk_int_to_str(int val, char* buf, int max)
         val /= 10;
     }
     
-    // Construir string
     int pos = 0;
     if (is_negative && max > 1) {
         buf[pos++] = '-';
