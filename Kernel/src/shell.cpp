@@ -1388,6 +1388,111 @@ static void cmd_type(char** args, size_t count)
     }
 }
 
+/* ls: listado de un directorio.  Sin flags lista solo los nombres; con -l
+   lista con atributos y tamano (delegado en "dir"); con -help muestra la
+   ayuda de la orden. */
+static void cmd_ls(char** args, size_t count)
+{
+    bool long_fmt = false;
+    bool all      = false;
+    bool help     = false;
+
+    for (size_t i = 1; i < count; ++i) {
+        const char* a = args[i];
+        if (a[0] != '-') {
+            continue;
+        }
+        if (shell_streq(a, "-help") || shell_streq(a, "-h") || shell_streq(a, "--help")) {
+            help = true;
+        }
+        if (shell_streq(a, "-l") || shell_streq(a, "-al") || shell_streq(a, "-all")) {
+            long_fmt = true;
+        }
+        if (shell_streq(a, "-a") || shell_streq(a, "-al") || shell_streq(a, "-all")) {
+            all = true;
+        }
+    }
+
+    if (help) {
+        ax_puts("uso: ls [-l] [-a] [ruta]\n");
+        return;
+    }
+
+    if (long_fmt) {
+        /* Listado detallado: atributos, tamano y fecha (mismo formato que
+           el comando "dir"). */
+        cmd_dir(args, count);
+        return;
+    }
+
+    /* Listado simple: solo los nombres de los hijos del directorio. */
+    char path[160];
+    shell_resolve(count >= 2 ? args[1] : nullptr, path, sizeof(path));
+
+    bool mounted = ax_fs_disk_mounted();
+    if (mounted) {
+        AxfsDiskDirEntry de;
+        for (uint32_t i = 0;; ++i) {
+            int rc = ax_fs_disk_readdir(path, i, &de);
+            if (rc != 0) {
+                break;
+            }
+            ax_puts(de.name);
+            ax_putc('\n');
+        }
+    } else {
+        char prefix[160];
+        size_t plen = 0;
+        if (!shell_path_is_root(path)) {
+            size_t i = 0;
+            while (path[i] == '/') {
+                ++i;
+            }
+            while (path[i] && plen + 2 < sizeof(prefix)) {
+                prefix[plen++] = path[i++];
+            }
+            prefix[plen++] = '/';
+        }
+        prefix[plen] = '\0';
+
+        for (uint32_t i = 0; i < ax_vfs_count(); ++i) {
+            const AxfsEntry* e = ax_vfs_entry(i);
+            if (!e || !e->name[0]) {
+                continue;
+            }
+            const char* rem = e->name;
+            if (plen > 0) {
+                size_t k = 0;
+                while (k < plen && e->name[k] == prefix[k]) {
+                    ++k;
+                }
+                if (k != plen) {
+                    continue;
+                }
+                rem = e->name + plen;
+            }
+            if (!rem[0]) {
+                continue;
+            }
+            const char* slash = rem;
+            while (*slash && *slash != '/') {
+                ++slash;
+            }
+            size_t n = (size_t)(slash - rem);
+            if (n > 63) {
+                n = 63;
+            }
+            char child[64];
+            for (size_t k = 0; k < n; ++k) {
+                child[k] = rem[k];
+            }
+            child[n] = '\0';
+            ax_puts(child);
+            ax_putc('\n');
+        }
+    }
+}
+
 static void cmd_copy(char** args, size_t count)
 {
     if (count < 3) {
@@ -2230,6 +2335,7 @@ static void shell_execute(char* line)
     else if (shell_streq(cmd, "pwd"))    cmd_pwd();
     else if (shell_streq(cmd, "type"))   cmd_type(args, count);
     else if (shell_streq(cmd, "cat"))    cmd_type(args, count);
+    else if (shell_streq(cmd, "ls"))    cmd_ls(args, count);
     else if (shell_streq(cmd, "copy"))   cmd_copy(args, count);
     else if (shell_streq(cmd, "ren"))    cmd_ren(args, count);
     else if (shell_streq(cmd, "del"))    cmd_del(args, count);
