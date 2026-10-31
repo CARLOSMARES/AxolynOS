@@ -33,6 +33,16 @@ int sdk_disk_write(ax_u64 lba, const void* buf, ax_u32 count);
 int sdk_sysinfo(AxSysInfo* info);
 int sdk_meminfo(AxMemInfo* info);
 
+/* Servicios del sistema */
+int sdk_service_start(const char* name);
+int sdk_service_stop(const char* name);
+int sdk_service_list(AxServiceInfo* info, uint32_t max_me);
+
+/* Módulos del kernel */
+int sdk_module_load(const char* name);
+int sdk_module_unload(unsigned int index);
+int sdk_module_list(AxModInfo* out, uint32_t max_me);
+
 #ifdef __cplusplus
 }
 #endif

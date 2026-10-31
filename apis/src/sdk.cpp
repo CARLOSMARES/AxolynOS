@@ -57,3 +57,40 @@ int sdk_meminfo(AxMemInfo* info)
     if (!info) return AX_EINVAL;
     return (int)ax_syscall6(AX_SYS_MEMINFO, (ax_u64)info, 0, 0, 0, 0, 0);
 }
+
+/* Servicios del sistema */
+int sdk_service_start(const char* name)
+{
+    if (!name || !name[0]) return AX_EINVAL;
+    return (int)ax_syscall1(AX_SYS_SERVICE_START, (long)name);
+}
+
+int sdk_service_stop(const char* name)
+{
+    if (!name || !name[0]) return AX_EINVAL;
+    return (int)ax_syscall1(AX_SYS_SERVICE_STOP, (long)name);
+}
+
+int sdk_service_list(AxServiceInfo* info, uint32_t max_me)
+{
+    if (!info) return AX_EINVAL;
+    return (int)ax_syscall2(AX_SYS_SERVICE_LIST, (long)info, (long)max_me);
+}
+
+/* Módulos del kernel */
+int sdk_module_load(const char* name)
+{
+    if (!name || !name[0]) return AX_EINVAL;
+    return (int)ax_syscall1(AX_SYS_MODLOAD, (long)name);
+}
+
+int sdk_module_unload(unsigned int index)
+{
+    return (int)ax_syscall1(AX_SYS_MODUNLOAD, (long)index);
+}
+
+int sdk_module_list(AxModInfo* out, uint32_t max_me)
+{
+    if (!out) return AX_EINVAL;
+    return (int)ax_syscall2(AX_SYS_MODLIST, (long)out, (long)max_me);
+}

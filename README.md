@@ -268,11 +268,28 @@ AxolynOS/
 ├── apis/             API de usuario (libaxos)
 ├── apps/             aplicaciones nativas (.cpp) y Axolyn (.ax)
 ├── compiladores/axc/ compilador Axolyn
-├── manuales/         documentación
+├── docs/            SDK y documentación de ejemplo
+├── manuales/         documentación técnica
 ├── tools/            herramientas de build (C++ y elf2efi.py)
 ├── Makefile          build principal
 ├── CMakeLists.txt    build alternativo con CMake
 └── build/            artefactos generados (no versionado)
+```
+
+### SDK AxolynOS
+
+El **SDK AxolynOS** proveeheaders y librerías para desarrollar aplicaciones
+nativas, servicios y módulos del sistema operativo sin necesidad de manejar
+accesos directos a hardware o llamadas al sistema bajas nivel.
+
+| Componente | Descripción |
+|---|---|
+| `apis/include/axos/` | Headers C con todas las APIs del sistema |
+| `apis/src/` | Implementación de `libaxos` (librería estática) |
+| `docs/sdk/` | Documentación, ejemplos y configuración de editor |
+| `docs/sdk/examples/` | Ejemplos basicos (C, módulos, servicios) |
+
+Consulta `docs/sdk/README.md` para la documentacion completa del SDK.
 ```
 
 ## Notas
