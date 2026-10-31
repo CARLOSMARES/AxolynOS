@@ -40,7 +40,7 @@ $(SO): boot.o
 	ld $(LDFLAGS) $(CRT0) $< -o $@ $(LIBS)
 
 $(TARGET): $(SO)
-	python3 $(CURDIR)/../../../scripts/elf2efi.py $< $@
+	python3 $(CURDIR)/../../../tools/elf2efi.py $< $@
 	@file $@ || true
 
 clean:

@@ -621,6 +621,64 @@ int ax_fs_disk_read(const char* path, void* buf, uint64_t size, uint64_t* out)
     return 0;
 }
 
+int ax_fs_disk_read_at(const char* path, uint64_t offset, void* buf,
+                       uint64_t size, uint64_t* out)
+{
+    if (out) {
+        *out = 0;
+    }
+    if (!fs_valid()) {
+        return AX_ENOENT;
+    }
+
+    char name[AXFS_DISK_NAME_MAX];
+    int rc = fs_norm(path, name, sizeof(name));
+    if (rc != 0) {
+        return rc;
+    }
+    AxfsDiskEntry* e = fs_find(name);
+    if (!e) {
+        return AX_ENOENT;
+    }
+    if (e->type != AXFS_DISK_TYPE_FILE) {
+        return AX_EINVAL;
+    }
+    if (offset >= e->size || size == 0) {
+        return 0;
+    }
+    if (!buf) {
+        return AX_EINVAL;
+    }
+
+    uint64_t to_read = e->size - offset;
+    if (to_read > size) {
+        to_read = size;
+    }
+
+    uint64_t done = 0;
+    while (done < to_read) {
+        uint64_t absolute = offset + done;
+        uint64_t b = absolute / AXFS_DISK_BLOCK_SIZE;
+        uint64_t lba = g_super.data_lba +
+                       (e->first_block + b) * AXFS_DISK_BLOCK_SECT;
+        if (ax_disk_read(g_drive, lba, AXFS_DISK_BLOCK_SECT, g_block) != 0) {
+            return AX_EIO;
+        }
+        uint64_t in_block = absolute % AXFS_DISK_BLOCK_SIZE;
+        uint64_t chunk = to_read - done;
+        if (chunk > AXFS_DISK_BLOCK_SIZE - in_block) {
+            chunk = AXFS_DISK_BLOCK_SIZE - in_block;
+        }
+        fs_memcpy((uint8_t*)buf + done, g_block + in_block, chunk);
+        done += chunk;
+    }
+
+    if (out) {
+        *out = done;
+    }
+    return 0;
+}
+
 int ax_fs_disk_unlink(const char* path)
 {
     if (!fs_valid()) {

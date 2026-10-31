@@ -1,5 +1,6 @@
 # Artefactos de compilacion
 build/
+cmake-build/
 *.o
 *.a
 *.elf

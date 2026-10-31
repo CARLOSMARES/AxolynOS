@@ -32,6 +32,11 @@
 #include "ax_power.h"
 #include "ax_disk.h"
 #include "ax_signal.h"
+#include "ax_registry.h"
+#include "ax_service.h"
+#include "ax_rtc.h"
+#include "ax_crypto.h"
+#include "ax_user.h"
 
 /* ------------------------------------------------------------------ */
 /* Tabla de handlers                                                   */
@@ -609,6 +614,247 @@ static int sys_reboot(uint64_t* args, uint64_t* ret)
 }
 
 /* ------------------------------------------------------------------ */
+/* Registro del sistema                                                */
+/* ------------------------------------------------------------------ */
+static int sys_reg_get(uint64_t* args, uint64_t* ret)
+{
+    char path[AX_REG_PATH_MAX];
+    if (!ax_user_str(args[0], path, sizeof(path)) || !path[0]) {
+        return AX_EINVAL;
+    }
+    uint64_t buf_addr = args[1];
+    uint64_t max = args[2];
+    if (max == 0 || !ax_user_ptr_ok(buf_addr, max)) {
+        return AX_EINVAL;
+    }
+    uint64_t type_addr = args[3];
+    if (type_addr && !ax_user_ptr_ok(type_addr, sizeof(uint32_t))) {
+        return AX_EINVAL;
+    }
+
+    uint32_t type = 0;
+    int rc = ax_registry_get(path, (char*)(uintptr_t)buf_addr, max, &type);
+    if (rc != 0) {
+        return AX_ENOENT;
+    }
+    if (type_addr) {
+        *(uint32_t*)(uintptr_t)type_addr = type;
+    }
+    *ret = (uint64_t)type;
+    return 0;
+}
+
+static int sys_reg_set(uint64_t* args, uint64_t* ret)
+{
+    char path[AX_REG_PATH_MAX];
+    char value[AX_REG_VALUE_MAX];
+    if (!ax_user_str(args[0], path, sizeof(path)) || !path[0] ||
+        !ax_user_str(args[1], value, sizeof(value))) {
+        return AX_EINVAL;
+    }
+    int rc = ax_registry_set(path, value, (uint32_t)args[2]);
+    *ret = 0;
+    return rc == 0 ? 0 : (rc == -2 ? AX_ENOSPC : AX_EINVAL);
+}
+
+static int sys_reg_del(uint64_t* args, uint64_t* ret)
+{
+    char path[AX_REG_PATH_MAX];
+    if (!ax_user_str(args[0], path, sizeof(path)) || !path[0]) {
+        return AX_EINVAL;
+    }
+    *ret = 0;
+    return ax_registry_del(path) == 0 ? 0 : AX_ENOENT;
+}
+
+static int sys_reg_enum(uint64_t* args, uint64_t* ret)
+{
+    uint64_t out_addr = args[1];
+    if (!ax_user_ptr_ok(out_addr, sizeof(AxRegEntryABI))) {
+        return AX_EINVAL;
+    }
+    AxRegEntry e;
+    if (ax_registry_enum((uint32_t)args[0], &e) != 0) {
+        return AX_ENOENT;
+    }
+    AxRegEntryABI* out = (AxRegEntryABI*)(uintptr_t)out_addr;
+    ax_memset(out, 0, sizeof(*out));
+    ax_strlcpy(out->path, e.path, sizeof(out->path));
+    ax_strlcpy(out->value, e.value, sizeof(out->value));
+    out->type = e.type;
+    out->value_len = e.value_len;
+    *ret = 0;
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Servicios                                                           */
+/* ------------------------------------------------------------------ */
+static int sys_service_list(uint64_t* args, uint64_t* ret)
+{
+    uint64_t out_addr = args[1];
+    if (!ax_user_ptr_ok(out_addr, sizeof(AxServiceInfoABI))) {
+        return AX_EINVAL;
+    }
+    AxServiceInfoK info;
+    if (ax_service_enum((uint32_t)args[0], &info) != 0) {
+        return AX_ENOENT;
+    }
+    AxServiceInfoABI* out = (AxServiceInfoABI*)(uintptr_t)out_addr;
+    ax_memset(out, 0, sizeof(*out));
+    ax_strlcpy(out->name, info.name, sizeof(out->name));
+    ax_strlcpy(out->description, info.description, sizeof(out->description));
+    out->state = info.state;
+    out->auto_start = info.auto_start ? 1u : 0u;
+    *ret = 0;
+    return 0;
+}
+
+static int sys_service_start(uint64_t* args, uint64_t* ret)
+{
+    char name[AX_SERVICE_NAME];
+    if (!ax_user_str(args[0], name, sizeof(name)) || !name[0]) {
+        return AX_EINVAL;
+    }
+    *ret = 0;
+    return ax_service_start(name) == 0 ? 0 : AX_ENOENT;
+}
+
+static int sys_service_stop(uint64_t* args, uint64_t* ret)
+{
+    char name[AX_SERVICE_NAME];
+    if (!ax_user_str(args[0], name, sizeof(name)) || !name[0]) {
+        return AX_EINVAL;
+    }
+    *ret = 0;
+    return ax_service_stop(name) == 0 ? 0 : AX_ENOENT;
+}
+
+/* ------------------------------------------------------------------ */
+/* Tiempo y aleatoriedad                                               */
+/* ------------------------------------------------------------------ */
+static int sys_rtc(uint64_t* args, uint64_t* ret)
+{
+    uint64_t out_addr = args[0];
+    if (!ax_user_ptr_ok(out_addr, sizeof(AxRtcTimeABI))) {
+        return AX_EINVAL;
+    }
+    AxRtcTime t;
+    ax_rtc_read(&t);
+    AxRtcTimeABI* out = (AxRtcTimeABI*)(uintptr_t)out_addr;
+    out->year = t.year;
+    out->month = t.month;
+    out->day = t.day;
+    out->hour = t.hour;
+    out->minute = t.minute;
+    out->second = t.second;
+    out->weekday = t.weekday;
+    *ret = 0;
+    return 0;
+}
+
+static int sys_random(uint64_t* args, uint64_t* ret)
+{
+    uint64_t len = args[1];
+    if (len == 0) {
+        *ret = 0;
+        return 0;
+    }
+    if (!ax_user_ptr_ok(args[0], len)) {
+        return AX_EINVAL;
+    }
+    ax_random_bytes((void*)(uintptr_t)args[0], len);
+    *ret = len;
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Usuarios                                                            */
+/* ------------------------------------------------------------------ */
+static int sys_user_info(uint64_t* args, uint64_t* ret)
+{
+    uint64_t out_addr = args[1];
+    if (!ax_user_ptr_ok(out_addr, sizeof(AxUserInfoABI))) {
+        return AX_EINVAL;
+    }
+    AxUserInfoK info;
+    if (ax_user_get_info((uint32_t)args[0], &info) != 0) {
+        return AX_ENOENT;
+    }
+    AxUserInfoABI* out = (AxUserInfoABI*)(uintptr_t)out_addr;
+    ax_memset(out, 0, sizeof(*out));
+    out->uid = info.uid;
+    out->gid = info.gid;
+    out->flags = info.flags;
+    ax_strlcpy(out->name, info.name, sizeof(out->name));
+    *ret = 0;
+    return 0;
+}
+
+static int sys_user_add(uint64_t* args, uint64_t* ret)
+{
+    char name[AX_USER_MAX_NAME];
+    char pass[AX_USER_MAX_PASS];
+    if (!ax_user_str(args[0], name, sizeof(name)) ||
+        !ax_user_str(args[1], pass, sizeof(pass)) || !name[0]) {
+        return AX_EINVAL;
+    }
+    *ret = 0;
+    return ax_user_add(name, pass, args[2] != 0) == 0 ? 0 : AX_EACCES;
+}
+
+static int sys_user_del(uint64_t* args, uint64_t* ret)
+{
+    char name[AX_USER_MAX_NAME];
+    if (!ax_user_str(args[0], name, sizeof(name)) || !name[0]) {
+        return AX_EINVAL;
+    }
+    *ret = 0;
+    return ax_user_del(name) == 0 ? 0 : AX_EACCES;
+}
+
+static int sys_user_passwd(uint64_t* args, uint64_t* ret)
+{
+    char name[AX_USER_MAX_NAME];
+    char oldp[AX_USER_MAX_PASS];
+    char newp[AX_USER_MAX_PASS];
+    if (!ax_user_str(args[0], name, sizeof(name)) ||
+        !ax_user_str(args[1], oldp, sizeof(oldp)) ||
+        !ax_user_str(args[2], newp, sizeof(newp)) || !name[0] || !newp[0]) {
+        return AX_EINVAL;
+    }
+    *ret = 0;
+    int rc = ax_user_change_password(name, oldp, newp);
+    if (rc == 0) {
+        return 0;
+    }
+    return (rc == -2) ? AX_EACCES : AX_ENOENT;
+}
+
+static int sys_user_verify(uint64_t* args, uint64_t* ret)
+{
+    char name[AX_USER_MAX_NAME];
+    char pass[AX_USER_MAX_PASS];
+    if (!ax_user_str(args[0], name, sizeof(name)) ||
+        !ax_user_str(args[1], pass, sizeof(pass)) || !name[0]) {
+        return AX_EINVAL;
+    }
+    *ret = 0;
+    return ax_user_verify(name, pass) == 0 ? 0 : AX_EACCES;
+}
+
+static int sys_log(uint64_t* args, uint64_t* ret)
+{
+    char text[192];
+    if (!ax_user_str(args[1], text, sizeof(text))) {
+        return AX_EINVAL;
+    }
+    ax_printf("[user:%llu] %s\n", (unsigned long long)args[0], text);
+    *ret = 0;
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* Registro y despacho                                                 */
 /* ------------------------------------------------------------------ */
 int ax_syscall_register(uint64_t nr, ax_syscall_handler handler)
@@ -707,7 +953,6 @@ void ax_syscall_init(void)
     ax_syscall_register(AX_SYS_SYSINFO,   sys_sysinfo);
     ax_syscall_register(AX_SYS_KILL,      sys_kill);
     ax_syscall_register(AX_SYS_YIELD,     sys_yield);
-    ax_syscall_register(AX_SYS_REBOOT,    sys_reboot);
     ax_syscall_register(AX_SYS_VMSTATUS,  sys_vmstatus);
     ax_syscall_register(AX_SYS_POWEROFF,  sys_shutdown);
     ax_syscall_register(AX_SYS_SUSPEND,   sys_suspend);
@@ -717,6 +962,23 @@ void ax_syscall_init(void)
     ax_syscall_register(AX_SYS_SIGNAL,    sys_signal);
     ax_syscall_register(AX_SYS_SIGSEND,   sys_sigsend);
     ax_syscall_register(AX_SYS_SIGPENDING, sys_sigpending);
+
+    /* --- Servicios del sistema --------------------------------------- */
+    ax_syscall_register(AX_SYS_REG_GET,      sys_reg_get);
+    ax_syscall_register(AX_SYS_REG_SET,      sys_reg_set);
+    ax_syscall_register(AX_SYS_REG_DEL,      sys_reg_del);
+    ax_syscall_register(AX_SYS_REG_ENUM,     sys_reg_enum);
+    ax_syscall_register(AX_SYS_SERVICE_LIST, sys_service_list);
+    ax_syscall_register(AX_SYS_SERVICE_START,sys_service_start);
+    ax_syscall_register(AX_SYS_SERVICE_STOP, sys_service_stop);
+    ax_syscall_register(AX_SYS_RTC,          sys_rtc);
+    ax_syscall_register(AX_SYS_RANDOM,       sys_random);
+    ax_syscall_register(AX_SYS_USER_INFO,    sys_user_info);
+    ax_syscall_register(AX_SYS_USER_ADD,     sys_user_add);
+    ax_syscall_register(AX_SYS_USER_DEL,     sys_user_del);
+    ax_syscall_register(AX_SYS_USER_PASSWD,  sys_user_passwd);
+    ax_syscall_register(AX_SYS_USER_VERIFY,  sys_user_verify);
+    ax_syscall_register(AX_SYS_LOG,          sys_log);
 }
 
 /* ------------------------------------------------------------------ */

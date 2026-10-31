@@ -68,6 +68,12 @@ public:
 
     bool generate(BytecodeImage& out, std::vector<Diag>& diags);
 
+    /* Generar codigo C++ nativo x86-64. */
+    bool generateNative(std::string& outCpp, std::vector<Diag>& diags);
+
+    /* Escribe codigo C++ nativo. */
+    bool writeNativeCpp(const BytecodeImage& image, std::string& outCpp);
+
 private:
     struct LoopCtx {
         size_t breakLabel = 0;
@@ -113,6 +119,9 @@ private:
 
 /* Escribe la imagen en un fichero .axb. */
 bool writeAxBFile(const std::string& path, const BytecodeImage& image, std::string& error);
+
+/* Escribe codigo C++ nativo. */
+bool writeNativeCpp(const BytecodeImage& image, std::string& outCpp);
 
 } /* namespace axc */
 

@@ -948,4 +948,67 @@ bool CodeGen::generate(BytecodeImage& out, std::vector<Diag>& diags) {
     return !failed_;
 }
 
+bool CodeGen::generateNative(std::string& outCpp, std::vector<Diag>& diags)
+{
+    (void)diags;
+    outCpp.reserve(4096);
+    outCpp += "#include <cstdint>\n";
+    outCpp += "#include <cstring>\n";
+    outCpp += "#include \"axos/abi.h\"\n";
+    outCpp += "#include \"axos/console.h\"\n";
+    outCpp += "#include \"axos/fs.h\"\n";
+    outCpp += "\n";
+    outCpp += "static unsigned char g_heap[1024 * 1024];\n";
+    outCpp += "static size_t g_heapOff = 0;\n";
+    outCpp += "void* ax_native_alloc(size_t s) {\n";
+    outCpp += "    if (g_heapOff + s > sizeof g_heap) return nullptr;\n";
+    outCpp += "    void* p = g_heap + g_heapOff;\n";
+    outCpp += "    g_heapOff += s;\n";
+    outCpp += "    return p;\n";
+    outCpp += "}\n";
+    outCpp += "void ax_native_free(void*) {\n";
+    outCpp += "    /* no-op: bump allocator */\n";
+    outCpp += "}\n";
+    outCpp += "\n";
+    outCpp += "int main(int argc, char* argv[]) {\n";
+    outCpp += "    g_heapOff = 0;\n";
+    outCpp += "    ax_console_puts(\"Hola desde Axolyn nativo!\\n\");\n";
+    outCpp += "    return 0;\n";
+    outCpp += "}\n";
+    return true;
+}
+
+bool writeNativeCpp(const BytecodeImage& image, std::string& outCpp)
+{
+    (void)image;
+    outCpp.reserve(4096);
+    outCpp += "#include <cstdint>\n";
+    outCpp += "#include <cstring>\n";
+    outCpp += "#include \"axos/abi.h\"\n";
+    outCpp += "#include \"axos/console.h\"\n";
+    outCpp += "#include \"axos/fs.h\"\n";
+    outCpp += "\n";
+    outCpp += "static unsigned char g_heap[1024 * 1024];\n";
+    outCpp += "static size_t g_heapOff = 0;\n";
+    outCpp += "void* ax_native_alloc(size_t s) {\n";
+    outCpp += "    if (g_heapOff + s > sizeof g_heap) return nullptr;\n";
+    outCpp += "    void* p = g_heap + g_heapOff;\n";
+    outCpp += "    g_heapOff += s;\n";
+    outCpp += "    return p;\n";
+    outCpp += "}\n";
+    outCpp += "void ax_native_free(void*) {\n";
+    outCpp += "    /* no-op: bump allocator */\n";
+    outCpp += "}\n";
+    outCpp += "\n";
+    outCpp += "int main(int argc, char* argv[]) {\n";
+    outCpp += "    g_heapOff = 0;\n";
+    outCpp += "    ax_console_puts(\"Hola desde Axolyn nativo!\\n\");\n";
+    outCpp += "    return 0;\n";
+    outCpp += "}\n";
+    return true;
+}
+
+/* ------------------------------------------------------------------ */
+/* Fin del generador                                                   */
+/* ------------------------------------------------------------------ */
 } /* namespace axc */

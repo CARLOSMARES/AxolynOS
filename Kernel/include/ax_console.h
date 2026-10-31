@@ -29,4 +29,19 @@ char ax_console_read(void);
 void ax_printf(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 void ax_vprintf(const char* fmt, va_list args);
 
+/*
+ * Control de la VGA para la pantalla de arranque.
+ *
+ * Mientras la VGA esta silenciada, ax_putc() sigue enviando todo al puerto
+ * serie (los logs no se pierden) pero no escribe en la memoria de video.
+ * Las funciones raw permiten dibujar la splash sin pasar por el parser ANSI.
+ */
+void ax_console_set_vga_muted(bool muted);
+bool ax_console_vga_muted(void);
+void ax_console_force_vga(void);
+void ax_console_raw_clear(uint8_t attr);
+void ax_console_raw_put(int row, int col, char c, uint8_t attr);
+void ax_console_raw_text(int row, int col, const char* text, uint8_t attr);
+void ax_console_raw_cursor(int row, int col);
+
 #endif /* AX_CONSOLE_H */

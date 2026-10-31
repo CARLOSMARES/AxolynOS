@@ -2030,6 +2030,29 @@ static void shell_redraw(const char* line, size_t cursor)
 /* ------------------------------------------------------------------ */
 /* Bucle principal                                                     */
 /* ------------------------------------------------------------------ */
+
+/* Declaraciones de los nuevos comandos esenciales del sistema. */
+/* Estas declaraciones deben estar antes del table de dispatch para que */
+/* shell_execute pueda llamarlas.                                       */
+static void cmd_cal(void);
+static void cmd_cat(char** args, size_t count);
+static void cmd_touch(char** args, size_t count);
+static void cmd_head(char** args, size_t count);
+static void cmd_tail(char** args, size_t count);
+static void cmd_wc(char** args, size_t count);
+static void cmd_grep(char** args, size_t count);
+static void cmd_find(char** args, size_t count);
+static void cmd_ps();
+static void cmd_kill(char** args, size_t count);
+static void cmd_start(char** args, size_t count);
+static void cmd_passwd_cmd(char** args, size_t count);
+static void cmd_su_cmd(char** args, size_t count);
+static void cmd_df();
+static void cmd_free();
+static void cmd_uname();
+static void cmd_which(char** args, size_t count);
+static void cmd_history();
+
 static void shell_execute(char* line)
 {
     char* args[AX_SHELL_MAX_ARGS];

@@ -66,7 +66,24 @@ enum {
     AX_SYS_SIGNAL     = 33, /* rdi=senal rsi=accion (DFL/IGN/manejador) */
     AX_SYS_SIGSEND    = 34, /* rdi=pid rsi=senal                       */
     AX_SYS_SIGPENDING = 35, /* rdi=senal (0=mascara) -> 1/0 | mascara   */
-    AX_SYS_MAX        = 36
+
+    /* Servicios del sistema (registro, servicios, RTC, usuarios). */
+    AX_SYS_REG_GET     = 36, /* rdi=path rsi=buf rdx=max r10=type*      */
+    AX_SYS_REG_SET     = 37, /* rdi=path rsi=value rdx=type             */
+    AX_SYS_REG_DEL     = 38, /* rdi=path                               */
+    AX_SYS_REG_ENUM    = 39, /* rdi=indice rsi=AxRegEntry*             */
+    AX_SYS_SERVICE_LIST= 40, /* rdi=indice rsi=AxServiceInfo*          */
+    AX_SYS_SERVICE_START=41, /* rdi=nombre                            */
+    AX_SYS_SERVICE_STOP =42, /* rdi=nombre                            */
+    AX_SYS_RTC         = 43, /* rdi=AxRtcTime*                        */
+    AX_SYS_RANDOM      = 44, /* rdi=buf rsi=len                       */
+    AX_SYS_USER_INFO   = 45, /* rdi=indice rsi=AxUserInfo*            */
+    AX_SYS_USER_ADD    = 46, /* rdi=nombre rsi=clave rdx=admin        */
+    AX_SYS_USER_DEL    = 47, /* rdi=nombre                            */
+    AX_SYS_USER_PASSWD = 48, /* rdi=nombre rsi=actual rdx=nueva        */
+    AX_SYS_USER_VERIFY = 49, /* rdi=nombre rsi=clave                  */
+    AX_SYS_LOG         = 50, /* rdi=nivel rsi=texto                   */
+    AX_SYS_MAX         = 64
 };
 
 /* Senales (coinciden con Kernel/include/ax_signal.h). */
@@ -189,6 +206,51 @@ typedef struct {
 } AxBootInfo;
 
 #define AX_BOOTINFO_MAGIC 0x4158424F4F54494Eul /* "AXBOOTIN" */
+
+/* ------------------------------------------------------------------ */
+/* Registro, servicios, RTC y usuarios (ABI de las syscalls 36-50)     */
+/* ------------------------------------------------------------------ */
+#define AX_REG_PATH_LEN   96
+#define AX_REG_VALUE_LEN  256
+#define AX_REG_TYPE_STRING 1
+#define AX_REG_TYPE_INT    2
+
+typedef struct {
+    char   path[AX_REG_PATH_LEN];
+    char   value[AX_REG_VALUE_LEN];
+    ax_u32 type;
+    ax_u32 value_len;
+} AxRegEntryABI;
+
+#define AX_SERVICE_NAME_LEN 32
+#define AX_SERVICE_DESC_LEN 80
+#define AX_SERVICE_STOPPED  0
+#define AX_SERVICE_RUNNING  1
+#define AX_SERVICE_FAILED   2
+
+typedef struct {
+    char   name[AX_SERVICE_NAME_LEN];
+    char   description[AX_SERVICE_DESC_LEN];
+    ax_u32 state;
+    ax_u32 auto_start;
+} AxServiceInfoABI;
+
+typedef struct {
+    ax_u32 year;
+    ax_u32 month;
+    ax_u32 day;
+    ax_u32 hour;
+    ax_u32 minute;
+    ax_u32 second;
+    ax_u32 weekday;
+} AxRtcTimeABI;
+
+typedef struct {
+    ax_u32 uid;
+    ax_u32 gid;
+    ax_u32 flags;       /* bit 0 admin, bit 1 sesion actual */
+    char   name[AX_NAME_LEN];
+} AxUserInfoABI;
 
 #ifdef __cplusplus
 }

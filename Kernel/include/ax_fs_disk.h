@@ -79,6 +79,9 @@ int  ax_fs_disk_mkdir(const char* path);
 int  ax_fs_disk_create(const char* path);
 int  ax_fs_disk_write(const char* path, const void* data, uint64_t size);
 int  ax_fs_disk_read(const char* path, void* buf, uint64_t size, uint64_t* out);
+/* Lee un fragmento sin cargar el fichero completo (cat, tail, grep, ...). */
+int  ax_fs_disk_read_at(const char* path, uint64_t offset, void* buf,
+                        uint64_t size, uint64_t* out);
 int  ax_fs_disk_unlink(const char* path);
 int  ax_fs_disk_rmdir(const char* path);
 int  ax_fs_disk_rename(const char* old_path, const char* new_path);

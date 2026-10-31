@@ -38,6 +38,8 @@
 #include "ax_keyboard.h"
 #include "ax_user.h"
 #include "ax_signal.h"
+#include "ax_splash.h"
+#include "ax_service.h"
 
 /* ------------------------------------------------------------------ */
 /* Pilas propias del kernel                                             */
@@ -181,6 +183,11 @@ void ax_kernel_early_init(AxBootInfo* info)
     ax_serial_init();
     ax_console_init();
 
+    /* La VGA queda en manos de la splash; el banner y los logs van al
+       puerto serie hasta que el shell descarte la pantalla de arranque. */
+    ax_splash_init();
+    ax_splash_progress(5, "consola y puerto serie");
+
     ax_printf("\n");
     ax_printf("=====================================================\n");
     ax_printf("  %s v%s\n", AX_KERNEL_NAME, AX_VERSION_STRING);
@@ -217,6 +224,7 @@ void ax_kernel_init(AxBootInfo* info)
         e820_count = info->e820_entries;
     }
 
+    ax_splash_progress(8, "detectando memoria fisica");
     ax_pmm_init(info->mem_size, e820, e820_count);
     ax_printf("[mem] PMM: %llu MiB totales, %llu MiB libres\n",
               (unsigned long long)(ax_pmm_total_bytes() / (1024ull * 1024ull)),

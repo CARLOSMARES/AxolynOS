@@ -1,28 +1,50 @@
 /*
- * AxolynOS - Sistema de usuarios y permisos
+ * AxolynOS - Gestor propio de usuarios cifrados.
+ *
+ * Formato de /etc/users.db:
+ *
+ *   cabecera (48 bytes):
+ *     "AXUDB002"  version  count  iterations  reserved  salt_db[16]
+ *
+ *   registro (192 bytes):
+ *     name[32] uid gid flags iterations
+ *     salt[16] nonce[12] ct_len
+ *     ciphertext[64] hmac[32] reserved[16]
+ *
+ * El texto cifrado contiene name[32] + verify[32].  La clave se obtiene
+ * con PBKDF2-HMAC-SHA256(password, salt, iterations).  El HMAC cubre la
+ * cabecera del registro y el texto cifrado, de modo que cualquier cambio
+ * en disco invalida la cuenta.
  */
 #include "ax_user.h"
 #include "ax_console.h"
 #include "ax_memory.h"
 #include "ax_fs_disk.h"
+#include "ax_crypto.h"
+
+#define USER_DB_PATH      "/etc/users.db"
+#define USER_OLD_DB_PATH  "/etc/passwd"
+#define USER_HEADER_SIZE  48u
+#define USER_RECORD_SIZE  192u
+#define USER_DB_MAX       (USER_HEADER_SIZE + AX_USER_MAX_USERS * USER_RECORD_SIZE)
+
+#define USER_FLAG_ACTIVE  0x01u
+#define USER_FLAG_ADMIN   0x02u
+#define USER_FLAG_LEGACY  0x04u
 
 static AxUser g_users[AX_USER_MAX_USERS];
-static int g_current_user = -1; /* -1 = sin login */
-static bool g_db_loaded = false; /* hay /etc/passwd en el volumen */
+static int    g_current_user = -1;
+static bool   g_db_loaded = false;
 
-/* Base de datos de usuarios en AxFS-D: una linea por usuario.
- *
- *   nombre:uid:gid:admin:HHHHHHHH\n
- *
- * El campo final es el hash FNV-1a de la contrasena (8 digitos hex). */
-#define USER_DB_PATH "/etc/passwd"
-
+/* ------------------------------------------------------------------ */
+/* Utilidades basicas                                                  */
+/* ------------------------------------------------------------------ */
 static int user_strlen(const char* s)
 {
     int n = 0;
     if (s) {
         while (s[n]) {
-            n++;
+            ++n;
         }
     }
     return n;
@@ -37,158 +59,607 @@ static bool user_streq(const char* a, const char* b)
         if (*a != *b) {
             return false;
         }
-        a++;
-        b++;
+        ++a;
+        ++b;
     }
     return *a == '\0' && *b == '\0';
 }
 
-static uint32_t user_hash_pwd(const char* password);
-
-static void user_set_password(AxUser* u, const char* password)
+static void user_copy_name(char* dst, const char* src)
 {
-    uint32_t h = user_hash_pwd(password);
-    for (int i = 0; i < 4; ++i) {
-        u->password[i] = (char)((h >> (i * 8)) & 0xff);
+    int i = 0;
+    if (!dst) {
+        return;
     }
-    for (int i = 4; i < AX_USER_MAX_PASS; ++i) {
-        u->password[i] = 0;
+    if (src) {
+        for (; i + 1 < AX_USER_MAX_NAME && src[i]; ++i) {
+            dst[i] = src[i];
+        }
     }
-}
-
-static void user_copy(AxUser* dst, const AxUser* src)
-{
-    for (size_t i = 0; i < sizeof(AxUser); ++i) {
-        ((uint8_t*)dst)[i] = ((const uint8_t*)src)[i];
+    for (; i < AX_USER_MAX_NAME; ++i) {
+        dst[i] = '\0';
     }
 }
 
 static void user_clear(AxUser* u)
 {
+    uint8_t* p = (uint8_t*)u;
     for (size_t i = 0; i < sizeof(AxUser); ++i) {
-        ((uint8_t*)u)[i] = 0;
+        p[i] = 0;
     }
     u->active = false;
     u->is_admin = false;
+    u->legacy = false;
 }
 
-static uint32_t user_hash_pwd(const char* pwd)
+static void user_copy(AxUser* dst, const AxUser* src)
 {
-    uint32_t h = 0x811c9dc5;
-    if (!pwd) return h;
-    for (const char* p = pwd; *p; ++p) {
+    const uint8_t* s = (const uint8_t*)src;
+    uint8_t* d = (uint8_t*)dst;
+    for (size_t i = 0; i < sizeof(AxUser); ++i) {
+        d[i] = s[i];
+    }
+}
+
+static uint32_t user_fnv(const char* s)
+{
+    uint32_t h = 0x811c9dc5u;
+    if (!s) {
+        return h;
+    }
+    for (const char* p = s; *p; ++p) {
         h ^= (uint8_t)*p;
-        h *= 0x1000193;
+        h *= 0x01000193u;
     }
     return h;
 }
 
+static void user_put32(uint8_t* p, uint32_t v)
+{
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16);
+    p[3] = (uint8_t)(v >> 24);
+}
+
+static uint32_t user_get32(const uint8_t* p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static void user_bytes_zero(void* dst, uint64_t n)
+{
+    uint8_t* p = (uint8_t*)dst;
+    for (uint64_t i = 0; i < n; ++i) {
+        p[i] = 0;
+    }
+}
+
+static void user_bytes_copy(void* dst, const void* src, uint64_t n)
+{
+    uint8_t* d = (uint8_t*)dst;
+    const uint8_t* s = (const uint8_t*)src;
+    for (uint64_t i = 0; i < n; ++i) {
+        d[i] = s[i];
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Registro cifrado                                                    */
+/* ------------------------------------------------------------------ */
+struct UserMeta {
+    uint8_t name[AX_USER_MAX_NAME];
+    uint32_t uid;
+    uint32_t gid;
+    uint32_t flags;
+    uint32_t iterations;
+    uint8_t salt[AX_USER_SALT_LEN];
+    uint8_t nonce[AX_USER_NONCE_LEN];
+    uint8_t ct[AX_USER_SECRET_LEN];
+};
+
+static void user_meta_serialize(const UserMeta& m, uint8_t* out)
+{
+    user_bytes_zero(out, USER_RECORD_SIZE);
+    user_bytes_copy(out, m.name, AX_USER_MAX_NAME);
+    user_put32(out + 32, m.uid);
+    user_put32(out + 36, m.gid);
+    user_put32(out + 40, m.flags);
+    user_put32(out + 44, m.iterations);
+    user_bytes_copy(out + 48, m.salt, AX_USER_SALT_LEN);
+    user_bytes_copy(out + 64, m.nonce, AX_USER_NONCE_LEN);
+    user_put32(out + 76, AX_USER_SECRET_LEN);
+    user_bytes_copy(out + 80, m.ct, AX_USER_SECRET_LEN);
+}
+
+static void user_meta_from_record(const uint8_t* rec, UserMeta& m)
+{
+    user_bytes_copy(m.name, rec, AX_USER_MAX_NAME);
+    m.uid = user_get32(rec + 32);
+    m.gid = user_get32(rec + 36);
+    m.flags = user_get32(rec + 40);
+    m.iterations = user_get32(rec + 44);
+    user_bytes_copy(m.salt, rec + 48, AX_USER_SALT_LEN);
+    user_bytes_copy(m.nonce, rec + 64, AX_USER_NONCE_LEN);
+    user_bytes_copy(m.ct, rec + 80, AX_USER_SECRET_LEN);
+}
+
+static void user_derive_key(const char* password, const uint8_t* salt,
+                            uint32_t iterations, uint8_t key[32])
+{
+    ax_pbkdf2_sha256(password ? password : "", (uint64_t)user_strlen(password),
+                     salt, AX_USER_SALT_LEN,
+                     iterations ? iterations : AX_USER_ITERATIONS,
+                     key, 32);
+}
+
+static void user_hmac_record(const uint8_t key[32], const UserMeta& m,
+                             uint8_t tag[AX_USER_TAG_LEN])
+{
+    uint8_t blob[USER_RECORD_SIZE];
+    user_meta_serialize(m, blob);
+    ax_hmac_sha256(key, 32, blob, 144, tag);
+    user_bytes_zero(blob, sizeof(blob));
+}
+
+static void user_fill_record(AxUser* u, const char* username,
+                             const char* password, uint32_t uid, uint32_t gid,
+                             bool admin, bool legacy)
+{
+    user_clear(u);
+    user_copy_name(u->username, username);
+    u->uid = uid;
+    u->gid = gid;
+    u->active = true;
+    u->is_admin = admin;
+    u->perms = admin ? AX_PERM_ALL : (AX_PERM_READ | AX_PERM_EXEC);
+    u->legacy = legacy;
+    u->iterations = AX_USER_ITERATIONS;
+
+    if (legacy) {
+        u->legacy_hash = user_fnv(password);
+        for (int i = 0; i < 4; ++i) {
+            u->password[i] = (uint8_t)(u->legacy_hash >> (i * 8));
+        }
+        return;
+    }
+
+    uint8_t key[32];
+    uint8_t secret[AX_USER_SECRET_LEN];
+    UserMeta m;
+    user_bytes_zero(&m, sizeof(m));
+    user_bytes_copy(m.name, u->username, AX_USER_MAX_NAME);
+    m.uid = uid;
+    m.gid = gid;
+    m.flags = USER_FLAG_ACTIVE | (admin ? USER_FLAG_ADMIN : 0u);
+    m.iterations = AX_USER_ITERATIONS;
+    ax_random_bytes(u->salt, AX_USER_SALT_LEN);
+    ax_random_bytes(u->nonce, AX_USER_NONCE_LEN);
+    user_derive_key(password, u->salt, u->iterations, key);
+
+    user_bytes_zero(secret, sizeof(secret));
+    user_bytes_copy(secret, u->username, AX_USER_MAX_NAME);
+    ax_hmac_sha256(key, 32, u->username, AX_USER_MAX_NAME, secret + 32);
+
+    user_bytes_copy(m.salt, u->salt, AX_USER_SALT_LEN);
+    user_bytes_copy(m.nonce, u->nonce, AX_USER_NONCE_LEN);
+    ax_chacha20_xor(key, u->nonce, 1, secret, m.ct, AX_USER_SECRET_LEN);
+    user_hmac_record(key, m, u->tag);
+    user_bytes_copy(u->password, m.ct, AX_USER_SECRET_LEN);
+
+    user_bytes_zero(key, sizeof(key));
+    user_bytes_zero(secret, sizeof(secret));
+    user_bytes_zero(&m, sizeof(m));
+}
+
+static int user_check_password(const AxUser* u, const char* password)
+{
+    if (!u || !u->active || !password) {
+        return -1;
+    }
+    if (u->legacy) {
+        return (user_fnv(password) == u->legacy_hash) ? 0 : -1;
+    }
+
+    uint8_t key[32];
+    uint8_t secret[AX_USER_SECRET_LEN];
+    uint8_t tag[AX_USER_TAG_LEN];
+    UserMeta m;
+    user_bytes_zero(&m, sizeof(m));
+    user_bytes_copy(m.name, u->username, AX_USER_MAX_NAME);
+    m.uid = u->uid;
+    m.gid = u->gid;
+    m.flags = USER_FLAG_ACTIVE | (u->is_admin ? USER_FLAG_ADMIN : 0u);
+    m.iterations = u->iterations;
+    user_bytes_copy(m.salt, u->salt, AX_USER_SALT_LEN);
+    user_bytes_copy(m.nonce, u->nonce, AX_USER_NONCE_LEN);
+    user_bytes_copy(m.ct, u->password, AX_USER_SECRET_LEN);
+    m.flags = USER_FLAG_ACTIVE | (u->is_admin ? USER_FLAG_ADMIN : 0u);
+
+    user_derive_key(password, u->salt, u->iterations, key);
+    user_hmac_record(key, m, tag);
+    if (!ax_crypto_equal(tag, u->tag, AX_USER_TAG_LEN)) {
+        user_bytes_zero(key, sizeof(key));
+        return -1;
+    }
+    ax_chacha20_xor(key, u->nonce, 1, m.ct, secret, AX_USER_SECRET_LEN);
+    bool ok = ax_crypto_equal(secret, u->username, AX_USER_MAX_NAME);
+    user_bytes_zero(key, sizeof(key));
+    user_bytes_zero(secret, sizeof(secret));
+    user_bytes_zero(tag, sizeof(tag));
+    return ok ? 0 : -1;
+}
+
+/* ------------------------------------------------------------------ */
+/* Base de datos                                                       */
+/* ------------------------------------------------------------------ */
+static int user_find(const char* username)
+{
+    if (!username) {
+        return -1;
+    }
+    for (int i = 0; i < AX_USER_MAX_USERS; ++i) {
+        if (g_users[i].active && user_streq(g_users[i].username, username)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int user_free_slot(bool include_root)
+{
+    int start = include_root ? 0 : 1;
+    for (int i = start; i < AX_USER_MAX_USERS; ++i) {
+        if (!g_users[i].active) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void user_serialize_header(uint8_t* out, uint32_t count)
+{
+    user_bytes_zero(out, USER_HEADER_SIZE);
+    user_bytes_copy(out, AX_USER_DB_MAGIC, 8);
+    user_put32(out + 8, AX_USER_DB_VERSION);
+    user_put32(out + 12, count);
+    user_put32(out + 16, AX_USER_ITERATIONS);
+    user_put32(out + 20, 0);
+    ax_random_bytes(out + 24, AX_USER_SALT_LEN);
+}
+
+static void user_serialize_record(const AxUser* u, uint8_t* out)
+{
+    UserMeta m;
+    user_bytes_zero(&m, sizeof(m));
+    user_bytes_copy(m.name, u->username, AX_USER_MAX_NAME);
+    m.uid = u->uid;
+    m.gid = u->gid;
+    m.flags = USER_FLAG_ACTIVE | (u->is_admin ? USER_FLAG_ADMIN : 0u) |
+              (u->legacy ? USER_FLAG_LEGACY : 0u);
+    m.iterations = u->iterations;
+    user_bytes_copy(m.salt, u->salt, AX_USER_SALT_LEN);
+    user_bytes_copy(m.nonce, u->nonce, AX_USER_NONCE_LEN);
+    if (u->legacy) {
+        user_bytes_zero(m.ct, AX_USER_SECRET_LEN);
+        user_put32(m.ct, u->legacy_hash);
+    } else {
+        user_bytes_copy(m.ct, u->password, AX_USER_SECRET_LEN);
+    }
+    user_meta_serialize(m, out);
+
+    if (!u->legacy) {
+        user_bytes_copy(out + 144, u->tag, AX_USER_TAG_LEN);
+    } else {
+        /* Etiqueta legacy: los 4 bytes del hash FNV. */
+        user_bytes_copy(out + 144, u->password, 4);
+    }
+}
+
+int ax_user_save(void)
+{
+    if (!ax_fs_disk_mounted()) {
+        return -1;
+    }
+
+    uint8_t blob[USER_DB_MAX];
+    uint32_t count = 0;
+    for (int i = 0; i < AX_USER_MAX_USERS; ++i) {
+        if (g_users[i].active) {
+            ++count;
+        }
+    }
+    user_serialize_header(blob, count);
+
+    uint32_t off = USER_HEADER_SIZE;
+    for (int i = 0; i < AX_USER_MAX_USERS; ++i) {
+        if (!g_users[i].active) {
+            continue;
+        }
+        user_serialize_record(&g_users[i], blob + off);
+        off += USER_RECORD_SIZE;
+    }
+
+    (void)ax_fs_disk_mkdir("/etc");
+    int rc = ax_fs_disk_write(USER_DB_PATH, blob, off);
+    if (rc == 0) {
+        ax_printf("[userdb] %u cuenta(s) cifradas guardadas (%u bytes)\n",
+                  (unsigned)count, (unsigned)off);
+    } else {
+        ax_printf("[userdb] error guardando %s (%d)\n", USER_DB_PATH, rc);
+    }
+    user_bytes_zero(blob, sizeof(blob));
+    return rc == 0 ? 0 : -1;
+}
+
+static bool user_parse_record(const uint8_t* rec)
+{
+    UserMeta m;
+    user_meta_from_record(rec, m);
+
+    /* El nombre visible debe ser una cadena valida. */
+    char name[AX_USER_MAX_NAME];
+    user_bytes_copy(name, m.name, AX_USER_MAX_NAME);
+    name[AX_USER_MAX_NAME - 1] = '\0';
+    if (!name[0]) {
+        return false;
+    }
+    if (user_find(name) >= 0) {
+        return false;
+    }
+
+    int slot = user_streq(name, "root") ? 0 : user_free_slot(false);
+    if (slot < 0) {
+        return false;
+    }
+
+    AxUser* u = &g_users[slot];
+    user_clear(u);
+    user_copy_name(u->username, name);
+    u->uid = m.uid;
+    u->gid = m.gid;
+    u->is_admin = (m.flags & USER_FLAG_ADMIN) != 0;
+    u->legacy = (m.flags & USER_FLAG_LEGACY) != 0;
+    u->iterations = m.iterations ? m.iterations : AX_USER_ITERATIONS;
+    user_bytes_copy(u->salt, m.salt, AX_USER_SALT_LEN);
+    user_bytes_copy(u->nonce, m.nonce, AX_USER_NONCE_LEN);
+    if (u->legacy) {
+        u->legacy_hash = user_get32(m.ct);
+        user_bytes_copy(u->password, m.ct, 4);
+    } else {
+        user_bytes_copy(u->password, m.ct, AX_USER_SECRET_LEN);
+        user_bytes_copy(u->tag, rec + 144, AX_USER_TAG_LEN);
+    }
+    u->active = true;
+    u->perms = u->is_admin ? AX_PERM_ALL : (AX_PERM_READ | AX_PERM_EXEC);
+    return true;
+}
+
+static void user_load_encrypted(const uint8_t* blob, uint64_t size)
+{
+    if (size < USER_HEADER_SIZE ||
+        !ax_crypto_equal(blob, AX_USER_DB_MAGIC, 8)) {
+        return;
+    }
+    uint32_t version = user_get32(blob + 8);
+    uint32_t count = user_get32(blob + 12);
+    if (version != AX_USER_DB_VERSION || count > AX_USER_MAX_USERS) {
+        return;
+    }
+    uint64_t off = USER_HEADER_SIZE;
+    for (uint32_t i = 0; i < count; ++i) {
+        if (off + USER_RECORD_SIZE > size) {
+            break;
+        }
+        (void)user_parse_record(blob + off);
+        off += USER_RECORD_SIZE;
+    }
+    g_db_loaded = true;
+}
+
+static void user_load_legacy(const uint8_t* blob, uint64_t size)
+{
+    /* Formato antiguo: nombre:uid:gid:admin:HHHHHHHH\n (FNV-1a). */
+    uint64_t pos = 0;
+    while (pos < size) {
+        uint64_t end = pos;
+        while (end < size && blob[end] != '\n') {
+            ++end;
+        }
+        if (end > pos) {
+            char line[256];
+            uint64_t len = end - pos;
+            if (len >= sizeof(line)) {
+                len = sizeof(line) - 1;
+            }
+            for (uint64_t i = 0; i < len; ++i) {
+                line[i] = (char)blob[pos + i];
+            }
+            line[len] = '\0';
+
+            char* c1 = nullptr;
+            char* c2 = nullptr;
+            char* c3 = nullptr;
+            char* c4 = nullptr;
+            for (char* p = line; *p; ++p) {
+                if (*p != ':') {
+                    continue;
+                }
+                if (!c1) c1 = p;
+                else if (!c2) c2 = p;
+                else if (!c3) c3 = p;
+                else if (!c4) c4 = p;
+            }
+            if (c1 && c2 && c3 && c4 && c1 != line) {
+                *c1 = *c2 = *c3 = *c4 = '\0';
+                const char* name = line;
+                uint32_t uid = 1000;
+                uint32_t gid = 1000;
+                char* p = c1 + 1;
+                uid = 0;
+                while (*p >= '0' && *p <= '9') uid = uid * 10 + (uint32_t)(*p++ - '0');
+                p = c2 + 1;
+                gid = 0;
+                while (*p >= '0' && *p <= '9') gid = gid * 10 + (uint32_t)(*p++ - '0');
+                bool admin = (*(c3 + 1) == '1');
+
+                if (!user_streq(name, "root") && user_find(name) < 0) {
+                    int slot = user_free_slot(false);
+                    if (slot >= 0) {
+                        AxUser* u = &g_users[slot];
+                        user_fill_record(u, name, "", uid, gid, admin, true);
+                        /* Lee el hash FNV little-endian del campo antiguo. */
+                        uint32_t hash = 0;
+                        const char* h = c4 + 1;
+                        for (int k = 0; k < 4 && h[0] && h[1]; ++k) {
+                            int hi = (h[0] >= '0' && h[0] <= '9') ? h[0] - '0' :
+                                     (h[0] >= 'a' && h[0] <= 'f') ? h[0] - 'a' + 10 :
+                                     (h[0] >= 'A' && h[0] <= 'F') ? h[0] - 'A' + 10 : 0;
+                            int lo = (h[1] >= '0' && h[1] <= '9') ? h[1] - '0' :
+                                     (h[1] >= 'a' && h[1] <= 'f') ? h[1] - 'a' + 10 :
+                                     (h[1] >= 'A' && h[1] <= 'F') ? h[1] - 'A' + 10 : 0;
+                            hash |= (uint32_t)((hi << 4) | lo) << (k * 8);
+                            h += 2;
+                        }
+                        u->legacy_hash = hash;
+                        user_bytes_copy(u->password, &hash, 4);
+                    }
+                }
+            }
+        }
+        pos = end + 1;
+    }
+    g_db_loaded = true;
+}
+
+static int user_read_file(const char* path, uint8_t* buf, uint64_t max,
+                          uint64_t* out)
+{
+    uint64_t got = 0;
+    int rc = ax_fs_disk_read(path, buf, max, &got);
+    if (out) {
+        *out = got;
+    }
+    return rc;
+}
+
+/* ------------------------------------------------------------------ */
+/* API publica                                                        */
+/* ------------------------------------------------------------------ */
 void ax_user_init(void)
 {
     for (int i = 0; i < AX_USER_MAX_USERS; ++i) {
         user_clear(&g_users[i]);
     }
-    /* Crear usuario root */
-    user_clear(&g_users[0]);
-    g_users[0].uid = AX_USER_ROOT_UID;
-    g_users[0].gid = 0;
-    const char* rname = "root";
-    for (size_t i = 0; i < AX_USER_MAX_NAME - 1 && rname[i]; ++i) g_users[0].username[i] = rname[i];
-    g_users[0].username[AX_USER_MAX_NAME - 1] = '\0';
-    /* password por defecto vacia/root */
-    const char* rpwd = "root";
-    uint32_t h = user_hash_pwd(rpwd);
-    for (int i = 0; i < 4; ++i) g_users[0].password[i] = (char)((h >> (i*8)) & 0xff);
-    g_users[0].active = true;
-    g_users[0].is_admin = true;
-    g_users[0].perms = AX_PERM_ALL;
+    user_fill_record(&g_users[0], "root", "root", AX_USER_ROOT_UID, 0,
+                     true, false);
     g_current_user = -1;
     g_db_loaded = false;
-    ax_printf("[user] sistema de usuarios inicializado (root)\n");
+    ax_crypto_init();
+    ax_printf("[userdb] gestor cifrado inicializado (PBKDF2-SHA256 + ChaCha20)\n");
 }
 
 int ax_user_login(const char* username, const char* password)
 {
-    if (!username) return -1;
-    uint32_t h = user_hash_pwd(password);
-    for (int i = 0; i < AX_USER_MAX_USERS; ++i) {
-        if (!g_users[i].active) continue;
-        if (!user_streq(g_users[i].username, username)) continue;
-        bool ok = true;
-        for (int k = 0; k < 4; ++k) {
-            if (g_users[i].password[k] != (char)((h >> (k*8)) & 0xff)) { ok = false; break; }
-        }
-        if (!ok) continue;
-        g_current_user = i;
-        ax_printf("[user] sesion iniciada como %s (uid=%u)\n",
-                  g_users[i].username, g_users[i].uid);
-        return 0;
+    int slot = user_find(username);
+    if (slot < 0 || user_check_password(&g_users[slot], password) != 0) {
+        return -1;
     }
-    return -1;
+
+    /* Migracion transparente de una cuenta antigua (FNV-1a). */
+    if (g_users[slot].legacy) {
+        AxUser upgraded;
+        user_fill_record(&upgraded, g_users[slot].username, password,
+                         g_users[slot].uid, g_users[slot].gid,
+                         g_users[slot].is_admin, false);
+        user_copy(&g_users[slot], &upgraded);
+        (void)ax_user_save();
+        ax_printf("[userdb] cuenta '%s' migrada a cifrado v2\n",
+                  g_users[slot].username);
+    }
+
+    g_current_user = slot;
+    ax_printf("[userdb] sesion iniciada como %s (uid=%u)\n",
+              g_users[slot].username, (unsigned)g_users[slot].uid);
+    return 0;
 }
 
 int ax_user_logout(void)
 {
     g_current_user = -1;
-    ax_printf("[user] sesion cerrada\n");
+    ax_printf("[userdb] sesion cerrada\n");
     return 0;
 }
 
 int ax_user_add(const char* username, const char* password, bool is_admin)
 {
-    if (g_current_user < 0 || !g_users[g_current_user].is_admin) return -1;
-    if (!username || !username[0]) return -1;
-    for (int i = 0; i < AX_USER_MAX_USERS; ++i) {
-        if (g_users[i].active && user_streq(username, g_users[i].username)) {
-            return -1;      /* el nombre ya existe */
-        }
+    if (g_current_user < 0 || !g_users[g_current_user].is_admin) {
+        return -1;
     }
-    for (int i = 1; i < AX_USER_MAX_USERS; ++i) {
-        if (!g_users[i].active) {
-            user_clear(&g_users[i]);
-            g_users[i].uid = 1000 + i;
-            g_users[i].gid = 1000 + i;
-            for (size_t j = 0; j < AX_USER_MAX_NAME - 1 && username[j]; ++j) g_users[i].username[j] = username[j];
-            g_users[i].username[AX_USER_MAX_NAME - 1] = '\0';
-            uint32_t h = user_hash_pwd(password);
-            for (int k = 0; k < 4; ++k) g_users[i].password[k] = (char)((h >> (k*8)) & 0xff);
-            g_users[i].active = true;
-            g_users[i].is_admin = is_admin;
-            g_users[i].perms = is_admin ? AX_PERM_ALL : (AX_PERM_READ | AX_PERM_EXEC);
-            ax_printf("[user] creado usuario %s\n", g_users[i].username);
-            (void)ax_user_save();
-            return 0;
-        }
+    if (!username || !username[0] || user_strlen(username) >= AX_USER_MAX_NAME) {
+        return -1;
     }
-    return -1;
+    if (user_find(username) >= 0) {
+        return -1;
+    }
+    int slot = user_free_slot(false);
+    if (slot < 0) {
+        return -1;
+    }
+    user_fill_record(&g_users[slot], username, password,
+                     1000u + (uint32_t)slot, 1000u + (uint32_t)slot,
+                     is_admin, false);
+    ax_printf("[userdb] creada cuenta cifrada %s\n", g_users[slot].username);
+    (void)ax_user_save();
+    return 0;
 }
 
 int ax_user_del(const char* username)
 {
-    if (g_current_user < 0 || !g_users[g_current_user].is_admin) return -1;
-    if (!username) return -1;
-    for (int i = 1; i < AX_USER_MAX_USERS; ++i) {
-        if (g_users[i].active && user_streq(g_users[i].username, username)) {
-            user_clear(&g_users[i]);
-            (void)ax_user_save();
-            return 0;
-        }
+    if (g_current_user < 0 || !g_users[g_current_user].is_admin) {
+        return -1;
     }
-    return -1;
+    if (!username || user_streq(username, "root") ||
+        (g_current_user >= 0 && user_streq(username, g_users[g_current_user].username))) {
+        return -1;
+    }
+    int slot = user_find(username);
+    if (slot < 0) {
+        return -1;
+    }
+    user_clear(&g_users[slot]);
+    (void)ax_user_save();
+    return 0;
 }
 
 int ax_user_list(char* out, uint64_t max)
 {
-    if (!out || max == 0) return -1;
-    size_t pos = 0;
-    const char* hdr = "USERS:\n";
-    for (const char* p = hdr; *p && pos < max - 1; ++p) out[pos++] = *p;
+    if (!out || max == 0) {
+        return -1;
+    }
+    uint64_t pos = 0;
+    const char* hdr = "USUARIOS (base cifrada):\n";
+    for (const char* p = hdr; *p && pos + 1 < max; ++p) {
+        out[pos++] = *p;
+    }
     for (int i = 0; i < AX_USER_MAX_USERS; ++i) {
-        if (!g_users[i].active) continue;
-        if (pos < max - 1) out[pos++] = ' ';
-        for (const char* p = g_users[i].username; *p && pos < max - 1; ++p) out[pos++] = *p;
-        if (g_users[i].is_admin && pos < max - 6) { out[pos++] = '('; out[pos++] = 'a'; out[pos++] = 'd'; out[pos++] = 'm'; out[pos++] = 'i'; out[pos++] = 'n'; out[pos++] = ')'; }
-        if (pos < max - 1) out[pos++] = '\n';
+        if (!g_users[i].active) {
+            continue;
+        }
+        if (pos + 1 < max) out[pos++] = ' ';
+        for (const char* p = g_users[i].username; *p && pos + 1 < max; ++p) {
+            out[pos++] = *p;
+        }
+        if (g_users[i].is_admin && pos + 7 < max) {
+            const char* tag = " (admin)";
+            for (const char* p = tag; *p; ++p) out[pos++] = *p;
+        }
+        if (i == g_current_user && pos + 3 < max) {
+            out[pos++] = ' ';
+            out[pos++] = '*';
+        }
+        if (pos + 1 < max) out[pos++] = '\n';
     }
     out[pos] = '\0';
     return (int)pos;
@@ -197,14 +668,20 @@ int ax_user_list(char* out, uint64_t max)
 int ax_user_count(void)
 {
     int c = 0;
-    for (int i = 0; i < AX_USER_MAX_USERS; ++i) if (g_users[i].active) ++c;
+    for (int i = 0; i < AX_USER_MAX_USERS; ++i) {
+        if (g_users[i].active) ++c;
+    }
     return c;
 }
 
 AxUser* ax_user_current(void)
 {
-    if (g_current_user < 0 || g_current_user >= AX_USER_MAX_USERS) return 0;
-    if (!g_users[g_current_user].active) return 0;
+    if (g_current_user < 0 || g_current_user >= AX_USER_MAX_USERS) {
+        return nullptr;
+    }
+    if (!g_users[g_current_user].active) {
+        return nullptr;
+    }
     return &g_users[g_current_user];
 }
 
@@ -217,7 +694,7 @@ uint32_t ax_user_getuid(void)
 bool ax_user_is_root(void)
 {
     AxUser* u = ax_user_current();
-    return u ? (u->is_admin || u->uid == 0) : false;
+    return u ? (u->is_admin || u->uid == AX_USER_ROOT_UID) : false;
 }
 
 bool ax_user_check_perm(const char* path, uint32_t need_perm)
@@ -229,184 +706,6 @@ bool ax_user_check_perm(const char* path, uint32_t need_perm)
     return (u->perms & need_perm) == need_perm;
 }
 
-/* ------------------------------------------------------------------ */
-/* Persistencia en /etc/passwd (AxFS-D)                                */
-/* ------------------------------------------------------------------ */
-
-static int user_hexval(char c)
-{
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    return -1;
-}
-
-static uint32_t user_parse_u32(const char* s, const char* end)
-{
-    uint32_t v = 0;
-    while (s < end && *s >= '0' && *s <= '9') {
-        v = v * 10 + (uint32_t)(*s - '0');
-        s++;
-    }
-    return v;
-}
-
-static uint32_t user_parse_hash(const char* s, const char* end)
-{
-    /* El hash se guarda byte a byte en orden little-endian. */
-    uint32_t v = 0;
-    for (int k = 0; k < 4; ++k) {
-        if (s + 1 >= end) {
-            break;
-        }
-        int hi = user_hexval(s[0]);
-        int lo = user_hexval(s[1]);
-        if (hi < 0 || lo < 0) {
-            break;
-        }
-        v |= ((uint32_t)((hi << 4) | lo)) << (k * 8);
-        s += 2;
-    }
-    return v;
-}
-
-static size_t user_append(char* out, size_t pos, size_t max, const char* s)
-{
-    if (!s) {
-        return pos;
-    }
-    while (*s && pos + 1 < max) {
-        out[pos++] = *s++;
-    }
-    return pos;
-}
-
-static size_t user_append_u32(char* out, size_t pos, size_t max, uint32_t v)
-{
-    char digits[16];
-    int n = 0;
-    if (v == 0) {
-        digits[n++] = '0';
-    }
-    while (v && n < (int)sizeof(digits)) {
-        digits[n++] = (char)('0' + (v % 10));
-        v /= 10;
-    }
-    while (n > 0 && pos + 1 < max) {
-        out[pos++] = digits[--n];
-    }
-    return pos;
-}
-
-static size_t user_append_hash(char* out, size_t pos, size_t max,
-                               const char* pwd_bytes)
-{
-    static const char hex[] = "0123456789abcdef";
-    for (int k = 0; k < 4 && pos + 1 < max; ++k) {
-        uint8_t b = (uint8_t)pwd_bytes[k];
-        if (pos + 2 < max) {
-            out[pos++] = hex[(b >> 4) & 0x0f];
-        }
-        if (pos + 1 < max) {
-            out[pos++] = hex[b & 0x0f];
-        }
-    }
-    return pos;
-}
-
-int ax_user_save(void)
-{
-    if (!ax_fs_disk_mounted()) {
-        return -1;
-    }
-
-    char buf[2048];
-    size_t pos = 0;
-
-    for (int i = 1; i < AX_USER_MAX_USERS; ++i) {
-        if (!g_users[i].active) {
-            continue;
-        }
-        pos = user_append(buf, pos, sizeof(buf), g_users[i].username);
-        if (pos + 1 < sizeof(buf)) buf[pos++] = ':';
-        pos = user_append_u32(buf, pos, sizeof(buf), g_users[i].uid);
-        if (pos + 1 < sizeof(buf)) buf[pos++] = ':';
-        pos = user_append_u32(buf, pos, sizeof(buf), g_users[i].gid);
-        if (pos + 1 < sizeof(buf)) buf[pos++] = ':';
-        if (pos + 1 < sizeof(buf)) buf[pos++] = g_users[i].is_admin ? '1' : '0';
-        if (pos + 1 < sizeof(buf)) buf[pos++] = ':';
-        pos = user_append_hash(buf, pos, sizeof(buf), g_users[i].password);
-        if (pos + 1 < sizeof(buf)) buf[pos++] = '\n';
-    }
-    buf[pos] = '\0';
-
-    (void)ax_fs_disk_mkdir("/etc");
-    int rc = ax_fs_disk_write(USER_DB_PATH, buf, pos);
-    if (rc == 0) {
-        ax_printf("[user] base de usuarios guardada (%u bytes)\n",
-                  (unsigned)pos);
-    }
-    return rc == 0 ? 0 : -1;
-}
-
-static void user_load_line(const char* line, size_t len)
-{
-    /* nombre:uid:gid:admin:hash */
-    size_t c1 = len, c2 = len, c3 = len, c4 = len;
-    for (size_t i = 0; i < len; ++i) {
-        if (line[i] != ':') {
-            continue;
-        }
-        if (c1 == len) c1 = i;
-        else if (c2 == len) c2 = i;
-        else if (c3 == len) c3 = i;
-        else if (c4 == len) c4 = i;
-    }
-    if (c1 == len || c2 == len || c3 == len || c4 == len || c1 == 0) {
-        return;
-    }
-
-    char name[AX_USER_MAX_NAME];
-    size_t nlen = c1;
-    if (nlen >= sizeof(name)) {
-        nlen = sizeof(name) - 1;
-    }
-    for (size_t i = 0; i < nlen; ++i) {
-        name[i] = line[i];
-    }
-    name[nlen] = '\0';
-    if (user_streq(name, "root")) {
-        return;
-    }
-
-    int slot = -1;
-    for (int i = 1; i < AX_USER_MAX_USERS; ++i) {
-        if (!g_users[i].active) {
-            slot = i;
-            break;
-        }
-    }
-    if (slot < 0) {
-        return;
-    }
-
-    AxUser* u = &g_users[slot];
-    user_clear(u);
-    u->uid = user_parse_u32(line + c1 + 1, line + c2);
-    u->gid = user_parse_u32(line + c2 + 1, line + c3);
-    u->is_admin = (c3 + 1 < len && line[c3 + 1] == '1');
-    for (size_t i = 0; i < nlen; ++i) {
-        u->username[i] = name[i];
-    }
-    u->username[nlen] = '\0';
-    uint32_t h = user_parse_hash(line + c4 + 1, line + len);
-    for (int k = 0; k < 4; ++k) {
-        u->password[k] = (char)((h >> (k * 8)) & 0xff);
-    }
-    u->active = true;
-    u->perms = u->is_admin ? AX_PERM_ALL : (AX_PERM_READ | AX_PERM_EXEC);
-}
-
 void ax_user_boot(void)
 {
     g_db_loaded = false;
@@ -414,39 +713,35 @@ void ax_user_boot(void)
         return;
     }
 
-    uint32_t type = 0;
+    uint8_t blob[USER_DB_MAX];
     uint64_t size = 0;
-    if (ax_fs_disk_stat(USER_DB_PATH, &type, &size) != 0 ||
-        type != AXFS_DISK_TYPE_FILE) {
-        return;
-    }
+    uint32_t type = 0;
+    uint64_t fsize = 0;
 
-    g_db_loaded = true;
-    if (size == 0 || size >= 2048) {
-        return;
-    }
-
-    char buf[2048];
-    uint64_t got = 0;
-    if (ax_fs_disk_read(USER_DB_PATH, buf, size, &got) != 0) {
-        return;
-    }
-    buf[got] = '\0';
-
-    size_t pos = 0;
-    while (pos < got) {
-        size_t end = pos;
-        while (end < got && buf[end] != '\n') {
-            end++;
+    if (ax_fs_disk_stat(USER_DB_PATH, &type, &fsize) == 0 &&
+        type == AXFS_DISK_TYPE_FILE &&
+        user_read_file(USER_DB_PATH, blob, sizeof(blob), &size) == 0 &&
+        size >= USER_HEADER_SIZE) {
+        user_load_encrypted(blob, size);
+        if (g_db_loaded) {
+            ax_printf("[userdb] %d cuenta(s) cargadas desde %s\n",
+                      ax_user_count(), USER_DB_PATH);
+            return;
         }
-        if (end > pos) {
-            user_load_line(buf + pos, end - pos);
-        }
-        pos = end + 1;
     }
 
-    ax_printf("[user] %d usuario(s) cargados de %s\n",
-              ax_user_count() - 1, USER_DB_PATH);
+    /* Migracion del formato antiguo /etc/passwd si existe. */
+    if (ax_fs_disk_stat(USER_OLD_DB_PATH, &type, &fsize) == 0 &&
+        type == AXFS_DISK_TYPE_FILE &&
+        user_read_file(USER_OLD_DB_PATH, blob, sizeof(blob), &size) == 0 &&
+        size > 0) {
+        user_load_legacy(blob, size);
+        ax_printf("[userdb] migrando %s al formato cifrado\n", USER_OLD_DB_PATH);
+        (void)ax_user_save();
+        return;
+    }
+
+    ax_printf("[userdb] no hay base de usuarios: se pedira crear la primera cuenta\n");
 }
 
 bool ax_user_needs_setup(void)
@@ -462,37 +757,88 @@ int ax_user_setup(const char* username, const char* password)
     if (user_strlen(username) >= AX_USER_MAX_NAME) {
         return -1;
     }
-
-    int slot = -1;
-    for (int i = 1; i < AX_USER_MAX_USERS; ++i) {
-        if (!g_users[i].active) {
-            slot = i;
-            break;
-        }
-    }
-    if (slot < 0) {
+    if (user_find(username) >= 0) {
         return -1;
     }
 
-    AxUser* u = &g_users[slot];
-    user_clear(u);
-    u->uid = 1000 + (uint32_t)slot;
-    u->gid = 1000 + (uint32_t)slot;
-    for (size_t i = 0; i < AX_USER_MAX_NAME - 1 && username[i]; ++i) {
-        u->username[i] = username[i];
+    int slot = user_free_slot(false);
+    if (slot < 0) {
+        return -1;
     }
-    u->username[AX_USER_MAX_NAME - 1] = '\0';
-    user_set_password(u, password);
-    u->active = true;
-    u->is_admin = true;
-    u->perms = AX_PERM_ALL;
-
+    user_fill_record(&g_users[slot], username, password,
+                     1000u + (uint32_t)slot, 1000u + (uint32_t)slot,
+                     true, false);
     g_current_user = slot;
     g_db_loaded = true;
-
     if (ax_fs_disk_mounted()) {
         (void)ax_user_save();
     }
-    ax_printf("[user] cuenta '%s' creada\n", u->username);
+    ax_printf("[userdb] cuenta '%s' creada y cifrada\n", g_users[slot].username);
     return 0;
+}
+
+int ax_user_change_password(const char* username, const char* old_password,
+                            const char* new_password)
+{
+    int slot = user_find(username ? username : "");
+    if (slot < 0 || !new_password || !new_password[0]) {
+        return -1;
+    }
+    if (user_check_password(&g_users[slot], old_password) != 0) {
+        return -2;
+    }
+    AxUser upgraded;
+    user_fill_record(&upgraded, g_users[slot].username, new_password,
+                     g_users[slot].uid, g_users[slot].gid,
+                     g_users[slot].is_admin, false);
+    user_copy(&g_users[slot], &upgraded);
+    int rc = ax_user_save();
+    ax_printf("[userdb] contrasena de '%s' actualizada\n",
+              g_users[slot].username);
+    return rc;
+}
+
+int ax_user_verify(const char* username, const char* password)
+{
+    int slot = user_find(username);
+    if (slot < 0) {
+        return -1;
+    }
+    return user_check_password(&g_users[slot], password);
+}
+
+int ax_user_get_info(uint32_t index, AxUserInfoK* out)
+{
+    if (!out) {
+        return -1;
+    }
+    uint32_t seen = 0;
+    for (int i = 0; i < AX_USER_MAX_USERS; ++i) {
+        if (!g_users[i].active) {
+            continue;
+        }
+        if (seen++ != index) {
+            continue;
+        }
+        user_bytes_zero(out, sizeof(*out));
+        out->uid = g_users[i].uid;
+        out->gid = g_users[i].gid;
+        out->flags = (g_users[i].is_admin ? 1u : 0u) |
+                     (i == g_current_user ? 2u : 0u);
+        user_copy_name(out->name, g_users[i].username);
+        return 0;
+    }
+    return -1;
+}
+
+uint32_t ax_user_uid_for_name(const char* username)
+{
+    int slot = user_find(username);
+    return slot >= 0 ? g_users[slot].uid : 0xFFFFFFFFu;
+}
+
+bool ax_user_is_admin_name(const char* username)
+{
+    int slot = user_find(username);
+    return slot >= 0 && g_users[slot].is_admin;
 }

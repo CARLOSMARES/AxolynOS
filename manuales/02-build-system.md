@@ -1,57 +1,57 @@
-# Sistema de compilacion
+# Sistema de compilación
 
-Todo se compila desde `scripts/build.sh` (o con el `Makefile` de la raiz,
-que es una fachada del script). No hay ningun sistema de build externo:
-solo `gcc`, `as`, `ld`, `nasm` y `ar`.
+AxolynOS se compila con **Make** (principal) o **CMake** (alternativo). No hay
+scripts de build intermedios: las reglas invocan directamente
+`gcc`, `g++`, `as`, `ld`, `ar`, `nasm`, `python3`, `mkfs.vfat`, `mcopy` y
+`xorriso`.
 
-## 1. Comandos
+## 1. Make
 
 ```bash
-bash scripts/build.sh               # todo: bootloader, tools, axc, kernel, modulos, apps, initrd, imagen
-bash scripts/build.sh bootloader    # stage1.bin + stage2.bin (NASM)
-bash scripts/build.sh tools         # mkinitramfs, mkdisk, mkmod, mkaxe, mkaxl, axl2a
-bash scripts/build.sh compiler      # axc (compilador) y axrun (runner de host)
-bash scripts/build.sh kernel        # build/axolyn.elf
-bash scripts/build.sh modules       # build/modules/*.axmod
-bash scripts/build.sh lib           # build/lib/libaxos.a y build/lib/libaxos.axl
-bash scripts/build.sh apps          # build/apps/*.elf, *.axe y *.axb
-bash scripts/build.sh initrd        # build/initrd.axfs
-bash scripts/build.sh image         # build/axolynos.img
-bash scripts/build.sh uefi          # build/efi/EFI/BOOT/BOOTX64.EFI
-bash scripts/build.sh iso           # build/AxolynOS.iso (BIOS + UEFI)
-bash scripts/build.sh clean         # borra build/
+make                # todo: ISO híbrida BIOS + UEFI
+make -j$(nproc)     # en paralelo
+make kernel         # solo build/axolyn.elf
+make image          # solo build/axolynos.img
+make iso            # solo build/AxolynOS.iso
+make clean          # borra build/
+make help           # lista completa de objetivos
 ```
 
-Equivalentes con `make`: `make`, `make kernel`, `make run`, `make test`,
-`make install`, `make clean`.
+Objetivos: `all`, `bootloader`, `tools`, `compiler`, `kernel`, `modules`,
+`lib`, `apps`, `initrd`, `image`, `uefi`, `iso`, `run`, `run-headless`,
+`run-install`, `run-disk`, `clean`, `help`.
 
-## 2. Las cuatro toolchains
+## 2. CMake
 
-| Pieza | Compilador | Salida |
+```bash
+cmake -S . -B cmake-build -DCMAKE_BUILD_TYPE=Release
+cmake --build cmake-build -j$(nproc)
+```
+
+Los artefactos se generan en `cmake-build/build/` con la misma estructura que
+`build/`.
+
+## 3. Toolchains
+
+| Pieza | Herramienta | Salida |
 |---|---|---|
-| Bootloader | `nasm -f bin` | `build/stage1.bin`, `build/stage2.bin` |
-| Kernel | `g++ -ffreestanding ...` + `as --64` | `build/axolyn.elf` |
-| Modulos | igual que el kernel + `ld -T module.ld` | `build/modules/*.axmod` |
+| Bootloader BIOS | `nasm -f bin` | `build/stage1.bin`, `build/stage2.bin` |
+| Kernel | `g++ -ffreestanding` + `as --64` + `ld` | `build/axolyn.elf` |
+| Módulos | igual que el kernel + `module.ld` | `build/modules/*.axmod` |
 | Apps nativas | `g++ -fPIE -pie -nostdlib` | `build/apps/*.elf` y `*.axe` |
 | Compilador `axc` | `g++` (host, con STL) | `build/axc`, `build/axrun` |
 | Herramientas | `g++` (host) | `build/tools/*` |
+| ISO | `xorriso` + `mkfs.vfat` + `mtools` | `build/AxolynOS.iso` |
 
-### 2.1 Banderas del kernel
+### 3.1 Banderas del kernel
 
 ```
 -std=gnu++17 -O2 -g
 -ffreestanding -nostdlib -fno-exceptions -fno-rtti
 -mno-red-zone -mcmodel=kernel -fno-pic -fno-pie
 -fno-stack-protector -fno-asynchronous-unwind-tables
--I Kernel/include -I apis/include
+-I Kernel/include -I Kernel/vm -I apis/include
 ```
-
-* `-mcmodel=kernel`: el kernel vive en `0xFFFFFFFF80200000`, dentro del
-  rango de -2 GiB, asi que el modelo de codificacion "kernel" permite
-  direccionamiento de 32 bits con signo.
-* `-mno-red-zone`: las interrupciones pueden sobrescribir la zona roja
-  de la pila.
-* `-fno-pic -fno-pie`: el kernel se enlaza en una direccion fija.
 
 Enlazado:
 
@@ -59,112 +59,99 @@ Enlazado:
 ld -T Kernel/linker/kernel.ld -z max-page-size=0x1000 --no-dynamic-linker
 ```
 
-El script `kernel.ld` coloca `.text` en `0xFFFFFFFF80200000` y usa `AT()`
-para que las cabeceras ELF contengan la direccion **fisica** (`0x200000`),
-que es lo que usa el bootloader para copiar la imagen.
+`Kernel/linker/kernel.ld` coloca `.text` en `0xFFFFFFFF80200000` y usa `AT()`
+para que las cabeceras ELF contengan la dirección física `0x200000`, que es la
+que usa el bootloader para copiar el kernel a memoria.
 
-### 2.2 Banderas de user mode
+### 3.2 Banderas de user mode
 
 ```
 -std=gnu++17 -O2 -ffreestanding -nostdlib -fno-exceptions -fno-rtti
--mno-red-zone -fPIE
+-mno-red-zone -fPIE -fno-stack-protector
 ```
 
 Enlazado:
 
 ```
-g++ -fPIE -pie -nostdlib -Wl,--no-dynamic-linker \
+g++ -fPIE -pie -nostdlib -Wl,--build-id=none -Wl,--no-dynamic-linker \
     -Wl,-T,apis/linker/userspace.ld -Wl,--undefined=_start
 ```
 
-Las aplicaciones se enlazan como **ELF ET_DYN (PIE)** para que el cargador
-del kernel pueda colocarlas en cualquier ranura (`AX_USER_VIRT_BASE +
-ranura * 16 MiB`) aplicando las relocaciones `R_X86_64_RELATIVE`.
+Las aplicaciones se enlazan como ELF `ET_DYN` (PIE) para que el cargador del
+kernel pueda colocarlas en cualquier ranura de 16 MiB aplicando las
+relocalizaciones `R_X86_64_RELATIVE`.
 
-No se usa `-static` (produce `ET_EXEC` y el cargador lo rechaza) ni
-`-Wl,--dynamic-linker` (el kernel carga el ELF directamente). El enlace se
-hace contra `build/obj/lib/libaxos.from_axl.a`, extraido del `.axl` con
-`axl2a`.
+## 4. Herramientas de host (`tools/`)
 
-## 3. Herramientas de host
-
-| Herramienta | Funcion |
+| Herramienta | Función |
 |---|---|
-| `scripts/tools/mkinitramfs.cpp` | empaqueta un directorio en una imagen AXFS |
-| `scripts/tools/mkdisk.cpp` | construye la imagen de disco con la cabecera AXDSK |
-| `scripts/tools/mkmod.cpp` | convierte un ELF de modulo en un `.axmod` plano |
-| `scripts/tools/mkaxe.cpp` | empaqueta un ELF como ejecutable `.axe` |
-| `scripts/tools/mkaxl.cpp` | empaqueta un archivo `ar` como biblioteca `.axl` |
-| `scripts/tools/axl2a.cpp` | extrae el archivo `ar` de un `.axl` |
+| `tools/mkinitramfs.cpp` | empaqueta un directorio en una imagen AXFS |
+| `tools/mkdisk.cpp` | construye la imagen de disco con cabecera AXDSK |
+| `tools/mkmod.cpp` | convierte un ELF de módulo en `.axmod` |
+| `tools/mkaxe.cpp` | empaqueta un ELF como `.axe` |
+| `tools/mkaxl.cpp` | empaqueta un archivo `ar` como `.axl` |
+| `tools/axl2a.cpp` | extrae el archivo `ar` de un `.axl` |
+| `tools/elf2efi.py` | convierte el ELF de gnu-efi en PE32+ `BOOTX64.EFI` |
 
-Se compilan automaticamente porque `build.sh` recorre
-`scripts/tools/*.cpp`.
+El `Makefile` y `CMakeLists.txt` compilan automáticamente todos los `.cpp` de
+`tools/`.
 
-## 4. El pipeline completo
+## 5. Pipeline
 
 ```
-Kernel/src/*.cpp + *.S
-        |  g++/as
+Kernel/src/*.cpp + *.S + Kernel/vm/*.cpp
+        |  g++ / as --64
         v
    build/obj/kernel/*.o
         |  ld -T kernel.ld
         v
-   build/axolyn.elf  ──────────────┐
-                                    |
-Kernel/modules/*/  ──> mkmod ──> .axmod
-                                    |
-apis/src/*.cpp    ──> ar ──> libaxos.a ──> mkaxl ──> libaxos.axl
-                                    |                    |
-                                    |         axl2a (extrae el ar)
-                                    |                    v
+   build/axolyn.elf ─────────────────────────┐
+                                             |
+Kernel/modules/*/  ──> ld + mkmod ──> .axmod ─┤
+                                             |
+apis/src/*.cpp  ──> ar ──> libaxos.a ──> mkaxl ──> libaxos.axl
+                                             |
 apps/native/*.cpp ──> g++ -pie ──> .elf ──> mkaxe ──> .axe
-apps/axolyn/*.ax  ──> axc    ──> .axb
-                                    |
-                    mkinitramfs ──> build/initrd.axfs
-                                    |
-   build/stage1.bin + stage2.bin ──> mkdisk ──> build/axolynos.img
-                                    |
-                    BOOTX64.EFI + FAT ─┐
-                                       v
-                            build/AxolynOS.iso (BIOS + UEFI)
+apps/axolyn/*.ax  ──> axc ──> .axb ──────────┤
+                                             |
+                        mkinitramfs ──> build/initrd.axfs
+                                             |
+stage1.bin + stage2.bin + axolyn.elf + initrd ──> mkdisk ──> axolynos.img
+                                             |
+BOOTX64.EFI + partición FAT + El Torito ─────┴──> AxolynOS.iso
 ```
 
-## 5. Anadir un fichero nuevo al kernel
+## 6. Añadir un fichero nuevo al kernel
 
 1. Crea el `.cpp` (o `.S`) en `Kernel/src/`.
-2. Si necesita una API nueva, **añade el prototipo al header**
-   correspondiente de `Kernel/include/` (los headers son los contratos
-   entre subsistemas).
-3. No hace falta tocar el script de compilacion: `build.sh` recoge
-   automaticamente todos los `.cpp` y `.S` de `Kernel/src/`.
-4. Si el subsistema debe arrancar, llama a su `init` desde
-   `ax_kernel_init()` (en `Kernel/src/kernel.cpp`).
+2. Añade los prototipos necesarios en `Kernel/include/`.
+3. No hay que tocar el build: el `Makefile` y CMake recogen todos los
+   `Kernel/src/*.cpp` y `Kernel/src/*.S` automáticamente.
+4. Si el subsistema debe arrancar, llama a su `init` desde `kmain()` en
+   `Kernel/src/kernel.cpp`.
 
-Para el ensamblador: el fichero debe terminar en `.S` (preprocesado por
-`as`) o `.s` (no preprocesado).
-
-## 6. Depuracion de la compilacion
+## 7. Depuración
 
 ```bash
-# ver los simbolos del kernel
 readelf -h build/axolyn.elf
-readelf -l build/axolyn.elf          # segmentos y direcciones fisicas
+readelf -l build/axolyn.elf
 nm build/axolyn.elf | head -40
+less build/axolyn.elf.map
 
 # recompilar un solo fichero
 g++ -std=gnu++17 -O2 -ffreestanding -nostdlib -fno-exceptions -fno-rtti \
     -mno-red-zone -mcmodel=kernel -fno-pic -fno-pie \
-    -I Kernel/include -I apis/include -c Kernel/src/kernel.cpp -o /tmp/k.o
-
-# ver el mapa de enlazado
-less build/axolyn.elf.map
+    -I Kernel/include -I Kernel/vm -I apis/include \
+    -c Kernel/src/kernel.cpp -o /tmp/kernel.o
 ```
 
-## 7. Problemas frecuentes
+## 8. Problemas frecuentes
 
-| Sintoma | Causa | Solucion |
+| Síntoma | Causa | Solución |
 |---|---|---|
-| `undefined reference to __udivdi3` | division de 64 bits sin libgcc | compila con `-lgcc` al enlazar o evita `/` en 64 bits |
-| `relocation truncated to fit` | direccion fuera de rango | usa `-mcmodel=kernel` y no references absolutas |
-| `cannot find -lgcc` | falta la toolchain | `sudo apt install build-essential` |
-| El kernel no arranca | revisa `build/axolyn.elf.map` y la imagen | `qemu-system-x86_64 -drive format=raw,file=build/axolynos.img -serial stdio -display none` |
+| `undefined reference to __udivdi3` | división de 64 bits sin libgcc | evita `/` y `%` de 64 bits en el kernel |
+| `relocation truncated to fit` | dirección fuera de rango | usa `-mcmodel=kernel` |
+| `nasm: unrecognized directive [org]` | ensamblar un `.asm` con `-f elf64` | el bootloader se ensambla con `nasm -f bin` |
+| QEMU no muestra nada con `-nographic` | el firmware escribe en VGA | usa también `-serial stdio`; el kernel duplica la salida a COM1 |
+| `Could not open ...iso` | la ISO no se generó | ejecuta `make iso` y comprueba `ls build/AxolynOS.iso` |
+| `-cdrom build/axolynos.img` falla | `-cdrom` solo acepta ISO | usa `-drive format=raw,file=build/axolynos.img` |

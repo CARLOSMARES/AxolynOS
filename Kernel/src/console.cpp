@@ -158,6 +158,7 @@ static uint16_t* ax_vga_buffer = (uint16_t*)AX_VGA_BUFFER;
 static int ax_vga_row = 0;
 static int ax_vga_col = 0;
 static uint8_t ax_vga_attr = AX_COLOR_DEFAULT;
+static bool ax_vga_muted = false;
 
 /* Estado del parser de secuencias de escape ANSI.  Ademas de aplicar los
  * codigos sobre la VGA, se reenvian al puerto serie para que los editores de
@@ -458,9 +459,76 @@ static bool ax_console_escape(char c)
     }
 }
 
+void ax_console_set_vga_muted(bool muted)
+{
+    ax_vga_muted = muted;
+}
+
+bool ax_console_vga_muted(void)
+{
+    return ax_vga_muted;
+}
+
+void ax_console_force_vga(void)
+{
+    ax_vga_muted = false;
+    ax_esc_state = AX_ESC_NONE;
+    ax_vga_attr = AX_COLOR_DEFAULT;
+    ax_vga_update_cursor();
+}
+
+void ax_console_raw_clear(uint8_t attr)
+{
+    for (int row = 0; row < AX_VGA_HEIGHT; ++row) {
+        for (int col = 0; col < AX_VGA_WIDTH; ++col) {
+            ax_vga_write_cell(row, col, ' ', attr);
+        }
+    }
+    ax_vga_row = 0;
+    ax_vga_col = 0;
+    ax_vga_attr = attr;
+}
+
+void ax_console_raw_put(int row, int col, char c, uint8_t attr)
+{
+    if (row < 0 || row >= AX_VGA_HEIGHT || col < 0 || col >= AX_VGA_WIDTH) {
+        return;
+    }
+    ax_vga_write_cell(row, col, c, attr);
+}
+
+void ax_console_raw_text(int row, int col, const char* text, uint8_t attr)
+{
+    if (!text) {
+        return;
+    }
+    for (int i = 0; text[i] && col + i < AX_VGA_WIDTH; ++i) {
+        ax_console_raw_put(row, col + i, text[i], attr);
+    }
+}
+
+void ax_console_raw_cursor(int row, int col)
+{
+    if (row < 0) row = 0;
+    if (row >= AX_VGA_HEIGHT) row = AX_VGA_HEIGHT - 1;
+    if (col < 0) col = 0;
+    if (col >= AX_VGA_WIDTH) col = AX_VGA_WIDTH - 1;
+    ax_vga_row = row;
+    ax_vga_col = col;
+    ax_vga_update_cursor();
+}
+
 void ax_putc(char c)
 {
-    if (ax_console_escape(c)) {
+    bool consumed = ax_console_escape(c);
+    if (consumed) {
+        return;
+    }
+    /* Con la VGA silenciada (splash activo) la salida normal no debe pisar
+       la pantalla, pero el puerto serie sigue recibiendo el log completo:
+       es la unica via para depurar en modo headless (-nographic). */
+    if (ax_vga_muted) {
+        ax_serial_putc(c);
         return;
     }
     if (c == '\n') {
