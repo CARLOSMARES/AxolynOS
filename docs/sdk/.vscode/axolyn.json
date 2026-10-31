@@ -1,0 +1,101 @@
+{
+    "name": "Axolyn",
+    "extensions": [".ax"],
+    "scopeName": "source.axolyn",
+    "comments": {
+        "lineComment": "//",
+        "blockCommentStart": "/*",
+        "blockCommentEnd": "*/"
+    },
+    "brackets": [
+        ["(", ")"],
+        ["[", "]"],
+        ["{", "}"],
+        ["<", ">"]
+    ],
+    "autoClosingPairs": [
+        {
+            "open": "{",
+            "close": "}"
+        },
+        {
+            "open": "[",
+            "close": "]"
+        },
+        {
+            "open": "(",
+            "close": ")"
+        }
+    ],
+    "surroundingPairs": [
+        {
+            "open": "{",
+            "close": "}"
+        },
+        {
+            "open": "[",
+            "close": "]"
+        },
+        {
+            "open": "(",
+            "close": ")"
+        }
+    ],
+    "keywords": [
+        "var",
+        "let",
+        "fn",
+        "import",
+        "struct",
+        "if",
+        "else",
+        "while",
+        "for",
+        "return",
+        "break",
+        "continue",
+        "true",
+        "false",
+        "int",
+        "bool",
+        "string",
+        "void",
+        "const"
+    ],
+    "functions": [
+        "console",
+        "core",
+        "fs",
+        "proc",
+        "mem",
+        "time",
+        "print",
+        "println",
+        "print_int",
+        "strlen",
+        "int_to_str",
+        "now_ms",
+        "sleep",
+        "exit",
+        "pid",
+        "spawn",
+        "open",
+        "read",
+        "write",
+        "close",
+        "list",
+        "stat",
+        "exit",
+        "gets"
+    ],
+    "types": [
+        "int",
+        "bool",
+        "string",
+        "void",
+        "*",
+        "[",
+        "]"
+    ],
+    "fallbackLanguage": "c"
+}

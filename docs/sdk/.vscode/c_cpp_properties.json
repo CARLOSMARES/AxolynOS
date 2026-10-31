@@ -1,0 +1,23 @@
+{
+    "configurations": [
+        {
+            "name": "AxolynOS Axc",
+            "includePath": [
+                "${workspaceFolder}/sdk/include",
+                "${workspaceFolder}/apis/include",
+                "${workspaceFolder}/compiladores/axc/include",
+                "${workspaceFolder}/Kernel/include",
+                "${workspaceFolder}/build/apps",
+                "${workspaceFolder}/build/modules"
+            ],
+            "compilerPath": "/usr/bin/gcc",
+            "intelliSenseMode": "gcc-x64",
+            "compilerArgs": [
+                "-I${workspaceFolder}/sdk/include",
+                "-I${workspaceFolder}/apis/include",
+                "-I${workspaceFolder}/Kernel/include"
+            ]
+        }
+    ],
+    "version": 4
+}

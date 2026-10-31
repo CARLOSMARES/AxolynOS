@@ -1,0 +1,33 @@
+{
+    "version": "0.1.0",
+    "tasks": [
+        {
+            "taskName": "build-sdk",
+            "type": "shell",
+            "command": "make sdk",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "taskName": "build-axc",
+            "type": "shell",
+            "command": "make compiler",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "taskName": "build-all",
+            "type": "shell",
+            "command": "make -j4",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "taskName": "run-axrun",
+            "type": "shell",
+            "command": "build/axrun",
+            "group": "run",
+            "problemMatcher": []
+        }
+    ]
+}
