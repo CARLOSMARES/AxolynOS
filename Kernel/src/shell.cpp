@@ -38,6 +38,10 @@
 #include "ax_net.h"
 #include "ax_user.h"
 #include "ax_service.h"
+#include "ax_paging.h"
+#include "ax_sysfile.h"
+#include "ax_ini.h"
+#include "ax_axc.h"
 
 #define AX_SHELL_MAX_LINE 256
 #define AX_SHELL_MAX_ARGS  8
@@ -50,6 +54,9 @@ extern int ax_vm_run(const char* path, const char* const* argv, int argc);
 /* Pantalla de login (definida al final de este fichero). */
 static void shell_login_loop(void);
 
+/* Entra en la carpeta de usuario tras iniciar sesion. */
+static void shell_enter_session(void);
+
 static char g_line[AX_SHELL_MAX_LINE];
 static char g_cwd[160] = "/";
 static char g_filebuf[AX_SHELL_FILE_MAX];
@@ -61,6 +68,14 @@ static void shell_memcpy(char* dst, const char* src, size_t len)
 {
     for (size_t i = 0; i < len; ++i) {
         dst[i] = src[i];
+    }
+}
+
+static void shell_memset(void* dst, int value, size_t len)
+{
+    uint8_t* p = (uint8_t*)dst;
+    for (size_t i = 0; i < len; ++i) {
+        p[i] = (uint8_t)value;
     }
 }
 
@@ -109,6 +124,47 @@ static bool input_try(char* out, uint32_t timeout_ms)
         return true;
     }
     return false;
+}
+
+/* ------------------------------------------------------------------ */
+/* Paginacion de salida                                                */
+/* ------------------------------------------------------------------ */
+/*
+ * Muestra un texto por pantallas.  Tras cada pantalla (AX_VGA_HEIGHT-2
+ * lineas) se espera a que se pulse espacio; con 'q' se abandona.
+ */
+static void shell_page_text(const char* text, uint64_t len)
+{
+    if (!text || len == 0) {
+        return;
+    }
+
+    uint64_t pos   = 0;
+    int      lines = 0;
+
+    while (pos < len) {
+        uint64_t end = pos;
+        while (end < len && text[end] != '\n') {
+            end++;
+        }
+        for (uint64_t i = pos; i < end; ++i) {
+            ax_putc(text[i]);
+        }
+        ax_putc('\n');
+        lines++;
+        pos = (end < len) ? end + 1 : len;
+
+        if (lines >= AX_VGA_HEIGHT - 2) {
+            ax_puts("\r-- mas -- [espacio] continuar, [q] salir ");
+            char c = input_getc();
+            if (c == 'q' || c == 'Q') {
+                ax_puts("\n");
+                return;
+            }
+            ax_puts("\r\x1b[K");
+            lines = 0;
+        }
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -401,6 +457,9 @@ static void cmd_help(void)
     ax_puts("  service start|stop <nombre>\n");
     ax_puts("  mem               informacion de memoria\n");
     ax_puts("  heap              informacion del heap\n");
+    ax_puts("  pageinfo          paginacion por demanda y swap\n");
+    ax_puts("  swap on|off       activa/desactiva el intercambio\n");
+    ax_puts("  swapout <dir|all> evacua una pagina al fichero de intercambio\n");
     ax_puts("  uptime            tiempo desde el arranque\n");
     ax_puts("  threads           hilos activos\n");
     ax_puts("  vm                maquinas virtuales\n");
@@ -415,10 +474,19 @@ static void cmd_help(void)
     ax_puts("  format [n]        formatea el disco n (por defecto 0)\n");
     ax_puts("  mount [n]         monta un volumen AxFS ya formateado\n");
     ax_puts("  install [n]       instala el sistema en el disco n\n");
-    ax_puts("  dir [ruta]        lista un directorio\n");
+    ax_puts("  dir [ruta] [/a]   lista un directorio (las apps van ocultas)\n");
     ax_puts("  cd <ruta>         cambia de directorio\n");
     ax_puts("  pwd               directorio actual\n");
-    ax_puts("  type <fich>       muestra un fichero\n");
+    ax_puts("  type <fich>       muestra un fichero (type /p pagina)\n");
+    ax_puts("  more <fich>       muestra un fichero por pantallas\n");
+    ax_puts("  ini <fich> [sec] [clave]  muestra valores de un .ini\n");
+    ax_puts("  desktop [dir]     metadatos de desktop.ini\n");
+    ax_puts("  axc [list]        configuracion de aplicaciones .axc\n");
+    ax_puts("  axc <fich>        carga un fichero .axc\n");
+    ax_puts("  appinfo <app>     version, publicador y conexiones de una app\n");
+    ax_puts("  logout / exit     cierra la sesion y pide de nuevo el login\n");
+    ax_puts("  sysfiles          archivos de sistema .axsys cargados\n");
+    ax_puts("  sysload <fich>    carga un archivo .axsys\n");
     ax_puts("  copy <ori> <des>  copia un fichero\n");
     ax_puts("  ren <viejo> <nuevo>  renombra\n");
     ax_puts("  del <fich>        borra un fichero\n");
@@ -571,6 +639,60 @@ static void cmd_mods(void)
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* Archivos de sistema .axsys                                          */
+/* ------------------------------------------------------------------ */
+static void cmd_sysfiles(void)
+{
+    int n = ax_sysfile_count();
+    if (n == 0) {
+        ax_puts("no hay archivos .axsys cargados\n");
+        return;
+    }
+
+    ax_puts("archivos de sistema (.axsys):\n");
+    for (int i = 0; i < AX_SYSFILE_MAX; ++i) {
+        AxSysFileInfo info;
+        if (ax_sysfile_info((uint32_t)i, &info) != 0) {
+            continue;
+        }
+        ax_printf("  [%d] %s  %s  %s\n", i, info.name,
+                  info.product, info.manufacturer);
+        ax_printf("      %s\n", info.description);
+        ax_printf("      tipo=%u  bytes=%llu  crc=%llx  firma=%s  meta=%u\n",
+                  (unsigned)info.content_type,
+                  (unsigned long long)info.content_size,
+                  (unsigned long long)info.content_crc32,
+                  info.signature_ok ? "valida" : "no",
+                  (unsigned)info.meta_count);
+        for (uint32_t m = 0; m < info.meta_count; ++m) {
+            char key[AX_SYSFILE_META_KEY];
+            char value[AX_SYSFILE_META_VALUE];
+            if (ax_sysfile_meta_at((uint32_t)i, m, key, sizeof(key),
+                                   value, sizeof(value)) == 0) {
+                ax_printf("      %s = %s\n", key, value);
+            }
+        }
+    }
+}
+
+static void cmd_sysload(char** args, size_t count)
+{
+    if (count < 2) {
+        ax_puts("uso: sysload <fichero.axsys>\n");
+        return;
+    }
+
+    char path[160];
+    shell_resolve(args[1], path, sizeof(path));
+    int rc = ax_sysfile_load(path);
+    if (rc < 0) {
+        shell_error("sysload: no se pudo cargar", rc);
+    } else {
+        ax_printf("archivo de sistema cargado en el indice %d\n", rc);
+    }
+}
+
 static void cmd_services(void)
 {
     uint32_t total = ax_service_count();
@@ -657,6 +779,143 @@ static void cmd_heap(void)
     ax_puts(" bytes, ");
     ax_putdec((int64_t)info.blocks);
     ax_puts(" bloques\n");
+}
+
+/* ------------------------------------------------------------------ */
+/* Paginacion por demanda y swap                                       */
+/* ------------------------------------------------------------------ */
+static void cmd_pageinfo(void)
+{
+    AxPagingInfo info;
+    shell_memset(&info, 0, sizeof(info));
+    ax_paging_fill_info(&info);
+
+    ax_puts("paginacion de user mode:\n");
+    ax_printf("  paginas totales : %llu\n", (unsigned long long)info.total_pages);
+    ax_printf("  mapeadas        : %llu\n", (unsigned long long)info.mapped_pages);
+    ax_printf("  libres (cero)   : %llu\n", (unsigned long long)info.free_pages);
+    ax_printf("  evacuadas       : %llu\n", (unsigned long long)info.swapped_pages);
+    ax_printf("  fallos de pag.  : %llu\n", (unsigned long long)info.page_faults);
+    ax_printf("  swap in/out     : %llu / %llu\n",
+              (unsigned long long)info.swap_ins,
+              (unsigned long long)info.swap_outs);
+    ax_printf("  intercambio     : %s (%llu de %llu ranuras, %llu bytes)\n",
+              info.swap_enabled ? "activo" : "inactivo",
+              (unsigned long long)info.swap_used,
+              (unsigned long long)info.swap_slots,
+              (unsigned long long)info.swap_bytes);
+}
+
+/* swap [on|off] | swapout <direccion|all> */
+static void cmd_swap(char** args, size_t count)
+{
+    if (count < 2) {
+        AxPagingInfo info;
+        shell_memset(&info, 0, sizeof(info));
+        ax_paging_fill_info(&info);
+        ax_puts("uso: swap on | swap off | swap swapout <direccion|all>\n");
+        ax_printf("intercambio: %s, %llu/%llu ranuras ocupadas\n",
+                  info.swap_enabled ? "activo" : "inactivo",
+                  (unsigned long long)info.swap_used,
+                  (unsigned long long)info.swap_slots);
+        return;
+    }
+
+    if (shell_streq(args[1], "on")) {
+        int rc = ax_paging_swap_enable(nullptr);
+        if (rc != 0) {
+            shell_error("no se pudo activar el intercambio", rc);
+        } else {
+            ax_puts("intercambio activado\n");
+        }
+        return;
+    }
+    if (shell_streq(args[1], "off")) {
+        ax_paging_swap_disable();
+        ax_puts("intercambio desactivado\n");
+        return;
+    }
+    if (shell_streq(args[1], "swapout")) {
+        if (count < 3) {
+            ax_puts("uso: swap swapout <direccion|all>\n");
+            return;
+        }
+        if (shell_streq(args[2], "all")) {
+            int n = ax_paging_evict_all();
+            ax_printf("%d pagina(s) evacuadas\n", n);
+            return;
+        }
+
+        /* Direccion hexadecimal (se admite el prefijo 0x). */
+        uint64_t addr = 0;
+        const char* s = args[2];
+        if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+            s += 2;
+        }
+        bool ok = true;
+        for (; *s; ++s) {
+            char c = *s;
+            int v;
+            if (c >= '0' && c <= '9') {
+                v = c - '0';
+            } else if (c >= 'a' && c <= 'f') {
+                v = c - 'a' + 10;
+            } else if (c >= 'A' && c <= 'F') {
+                v = c - 'A' + 10;
+            } else {
+                ok = false;
+                break;
+            }
+            addr = addr * 16 + (uint64_t)v;
+        }
+        if (!ok) {
+            ax_puts("swapout: direccion invalida\n");
+            return;
+        }
+        int rc = ax_paging_evict_page(addr);
+        if (rc != 0) {
+            shell_error("no se pudo evacuar la pagina", rc);
+        } else {
+            ax_printf("pagina %p evacuada\n", (void*)(uintptr_t)addr);
+        }
+        return;
+    }
+
+    ax_puts("uso: swap on | swap off | swap swapout <direccion|all>\n");
+}
+
+/* more <fichero>: muestra un fichero por pantallas. */
+static void cmd_more(char** args, size_t count)
+{
+    if (count < 2) {
+        ax_puts("uso: more <fichero>\n");
+        return;
+    }
+
+    char path[160];
+    shell_resolve(args[1], path, sizeof(path));
+
+    uint64_t got = 0;
+    int rc = -1;
+    if (ax_fs_disk_mounted()) {
+        rc = ax_fs_disk_read(path, g_filebuf, sizeof(g_filebuf) - 1, &got);
+    }
+
+    const char* data = g_filebuf;
+    if (rc != 0) {
+        uint64_t vsize = 0;
+        const void* vdata = ax_vfs_read(path, &vsize);
+        if (!vdata) {
+            shell_error("more: no existe", rc != 0 ? rc : AX_ENOENT);
+            return;
+        }
+        data = (const char*)vdata;
+        got  = vsize;
+    }
+    if (got > sizeof(g_filebuf) - 1) {
+        got = sizeof(g_filebuf) - 1;
+    }
+    shell_page_text(data, got);
 }
 
 static void cmd_uptime(void)
@@ -844,6 +1103,13 @@ typedef struct {
 static ShellDosEntry g_dos_entries[SHELL_DOS_MAX_ENTRIES];
 static int            g_dos_count;
 
+/*
+ * Las aplicaciones (.axe/.elf/.axb/.axmod) se ocultan por defecto en los
+ * listados: el usuario navega por sus carpetas y ejecuta las apps por nombre.
+ * "dir /a" o "ls -a" las vuelve a mostrar.
+ */
+static bool           g_hide_apps = true;
+
 static char shell_upper(char c)
 {
     if (c >= 'a' && c <= 'z') {
@@ -923,7 +1189,8 @@ static bool shell_dos_is_exec(const char* leaf)
     return false;
 }
 
-static void shell_dos_add(const char* leaf, bool dir, uint64_t size)
+/* Anade una entrada al listado sin aplicar el filtro de aplicaciones. */
+static void shell_dos_add_raw(const char* leaf, bool dir, uint64_t size)
 {
     if (!leaf || !leaf[0] || g_dos_count >= SHELL_DOS_MAX_ENTRIES) {
         return;
@@ -959,6 +1226,15 @@ static void shell_dos_add(const char* leaf, bool dir, uint64_t size)
     e->dir  = dir;
     e->exec = !dir && shell_dos_is_exec(name);
     e->size = dir ? 0 : size;
+}
+
+/* Anade una entrada al listado aplicando el filtro de aplicaciones ocultas. */
+static void shell_dos_add(const char* leaf, bool dir, uint64_t size)
+{
+    if (!dir && g_hide_apps && shell_dos_is_exec(leaf)) {
+        return;
+    }
+    shell_dos_add_raw(leaf, dir, size);
 }
 
 static void shell_dos_sort(void)
@@ -1085,6 +1361,19 @@ static void cmd_dir(char** args, size_t count)
     char path[160];
     shell_resolve(count >= 2 ? args[1] : nullptr, path, sizeof(path));
 
+    bool page = false;
+    bool show_all = false;
+    for (size_t i = 1; i < count; ++i) {
+        if (shell_streq(args[i], "/p")) {
+            page = true;
+        }
+        if (shell_streq(args[i], "/a") || shell_streq(args[i], "-a") ||
+            shell_streq(args[i], "-all") || shell_streq(args[i], "--all")) {
+            show_all = true;
+        }
+    }
+    g_hide_apps = !show_all;
+
     bool mounted = ax_fs_disk_mounted();
     uint32_t type = 0;
     uint64_t size = 0;
@@ -1138,7 +1427,8 @@ static void cmd_dir(char** args, size_t count)
     /* Un unico fichero: una sola linea, como MS-DOS. */
     if (listing_file) {
         g_dos_count = 0;
-        shell_dos_add(shell_basename(path), false, size);
+        /* Ruta explicita: se muestra aunque sea una aplicacion oculta. */
+        shell_dos_add_raw(shell_basename(path), false, size);
         uint8_t sec, min, hour, day, mon;
         uint32_t year;
         shell_rtc_read(&sec, &min, &hour, &day, &mon, &year);
@@ -1234,6 +1524,7 @@ static void cmd_dir(char** args, size_t count)
     uint32_t files = 0;
     uint32_t dirs = 0;
     uint64_t total = 0;
+    int lines = 0;
     for (int i = 0; i < g_dos_count; ++i) {
         ShellDosEntry* e = &g_dos_entries[i];
         shell_dos_print_line(e, day, mon, year, hour, min);
@@ -1242,6 +1533,16 @@ static void cmd_dir(char** args, size_t count)
         } else {
             files++;
             total += e->size;
+        }
+        if (page && ++lines >= AX_VGA_HEIGHT - 2) {
+            ax_puts("\r-- mas -- [espacio] continuar, [q] salir ");
+            char c = input_getc();
+            if (c == 'q' || c == 'Q') {
+                ax_puts("\n");
+                return;
+            }
+            ax_puts("\r\x1b[K");
+            lines = 0;
         }
     }
     if (g_dos_count == 0) {
@@ -1354,9 +1655,17 @@ static void cmd_pwd(void)
 static void cmd_type(char** args, size_t count)
 {
     if (count < 2) {
-        ax_puts("uso: type <fichero>\n");
+        ax_puts("uso: type [/p] <fichero>\n");
         return;
     }
+
+    bool page = false;
+    for (size_t i = 2; i < count; ++i) {
+        if (shell_streq(args[i], "/p")) {
+            page = true;
+        }
+    }
+
     char path[160];
     shell_resolve(args[1], path, sizeof(path));
 
@@ -1380,12 +1689,207 @@ static void cmd_type(char** args, size_t count)
     if (got > sizeof(g_filebuf) - 1) {
         got = sizeof(g_filebuf) - 1;
     }
+
+    if (page) {
+        shell_page_text(data, got);
+        return;
+    }
+
     for (uint64_t i = 0; i < got; ++i) {
         ax_putc(data[i]);
     }
     if (got == 0 || data[got - 1] != '\n') {
         ax_putc('\n');
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* Ficheros INI y desktop.ini                                          */
+/* ------------------------------------------------------------------ */
+static bool shell_ieq(const char* a, const char* b)
+{
+    while (*a != '\0' && *b != '\0') {
+        char ca = *a++;
+        char cb = *b++;
+        if (ca >= 'A' && ca <= 'Z') {
+            ca = (char)(ca - 'A' + 'a');
+        }
+        if (cb >= 'A' && cb <= 'Z') {
+            cb = (char)(cb - 'A' + 'a');
+        }
+        if (ca != cb) {
+            return false;
+        }
+    }
+    return *a == *b;
+}
+
+/* ini <fichero> [seccion] [clave] */
+static void cmd_ini(char** args, size_t count)
+{
+    if (count < 2) {
+        ax_puts("uso: ini <fichero> [seccion] [clave]\n");
+        return;
+    }
+
+    char path[160];
+    shell_resolve(args[1], path, sizeof(path));
+    int total = ax_ini_load(path);
+    if (total < 0) {
+        shell_error("ini: no se pudo cargar", total);
+        return;
+    }
+
+    if (count == 2) {
+        ax_printf("%d entrada(s) en %s:\n", total, path);
+        for (int i = 0; i < total; ++i) {
+            AxIniEntry e;
+            if (ax_ini_enum((uint32_t)i, &e) != 0) {
+                continue;
+            }
+            if (e.section[0]) {
+                ax_printf("[%s] ", e.section);
+            }
+            ax_printf("%s = %s\n", e.key, e.value);
+        }
+        return;
+    }
+
+    if (count == 3) {
+        ax_printf("seccion [%s]:\n", args[2]);
+        bool any = false;
+        for (int i = 0; i < total; ++i) {
+            AxIniEntry e;
+            if (ax_ini_enum((uint32_t)i, &e) != 0) {
+                continue;
+            }
+            if (shell_ieq(e.section, args[2])) {
+                ax_printf("  %s = %s\n", e.key, e.value);
+                any = true;
+            }
+        }
+        if (!any) {
+            ax_puts("  (seccion vacia o no encontrada)\n");
+        }
+        return;
+    }
+
+    char value[AX_INI_VALUE_MAX];
+    if (ax_ini_get(args[2], args[3], value, sizeof(value)) != 0) {
+        ax_puts("ini: clave no encontrada\n");
+        return;
+    }
+    ax_printf("%s\n", value);
+}
+
+/* desktop [dir]: muestra los metadatos de desktop.ini. */
+static void cmd_desktop(char** args, size_t count)
+{
+    char path[160];
+    shell_resolve(count >= 2 ? args[1] : nullptr, path, sizeof(path));
+
+    AxIniDesktop d;
+    if (ax_ini_load_desktop(path, &d) != 0 || !d.valid) {
+        ax_puts("desktop: no hay desktop.ini o no tiene [.ShellClassInfo]\n");
+        return;
+    }
+
+    ax_puts("desktop.ini [.ShellClassInfo]:\n");
+    ax_printf("  carpeta : %s\n", path);
+    if (d.display_name[0]) {
+        ax_printf("  nombre  : %s\n", d.display_name);
+    }
+    if (d.icon_file[0]) {
+        ax_printf("  icono   : %s (indice %d)\n", d.icon_file, d.icon_index);
+    }
+    if (d.info_tip[0]) {
+        ax_printf("  info    : %s\n", d.info_tip);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Configuracion de aplicaciones .axc                                 */
+/* ------------------------------------------------------------------ */
+static void shell_print_axc_info(int index)
+{
+    AxcInfo info;
+    if (ax_axc_info((uint32_t)index, &info) != 0) {
+        return;
+    }
+    ax_printf("  [%d] %s  v%s\n", index, info.name, info.version);
+    if (info.publisher[0]) {
+        ax_printf("      publicador : %s\n", info.publisher);
+    }
+    if (info.exec[0]) {
+        ax_printf("      ejecutable: %s\n", info.exec);
+    }
+    if (info.icon[0]) {
+        ax_printf("      icono     : %s\n", info.icon);
+    }
+    if (info.description[0]) {
+        ax_printf("      descripcion: %s\n", info.description);
+    }
+    for (uint32_t i = 0; i < info.conn_count; ++i) {
+        AxcConnection c;
+        if (ax_axc_conn((uint32_t)index, i, &c) == 0) {
+            ax_printf("      conexion  : %s -> %s\n", c.key, c.value);
+        }
+    }
+}
+
+/* axc [list] | axc info <app> | axc <fichero.axc> */
+static void cmd_axc(char** args, size_t count)
+{
+    if (count < 2 || shell_streq(args[1], "list")) {
+        int n = ax_axc_count();
+        if (n == 0) {
+            ax_puts("no hay configuraciones .axc cargadas\n");
+            return;
+        }
+        ax_printf("aplicaciones configuradas (%d):\n", n);
+        for (int i = 0; i < AX_AXC_MAX_APPS; ++i) {
+            AxcInfo info;
+            if (ax_axc_info((uint32_t)i, &info) == 0) {
+                shell_print_axc_info(i);
+            }
+        }
+        return;
+    }
+
+    if (shell_streq(args[1], "info") && count >= 3) {
+        int idx = ax_axc_find(args[2]);
+        if (idx < 0) {
+            ax_puts("axc: aplicacion no encontrada\n");
+            return;
+        }
+        shell_print_axc_info(idx);
+        return;
+    }
+
+    char path[160];
+    shell_resolve(args[1], path, sizeof(path));
+    int idx = ax_axc_load(path);
+    if (idx < 0) {
+        shell_error("axc: no se pudo cargar", idx);
+        return;
+    }
+    ax_printf("configuracion cargada en el indice %d:\n", idx);
+    shell_print_axc_info(idx);
+}
+
+/* appinfo <aplicacion>: muestra la configuracion de una app. */
+static void cmd_appinfo(char** args, size_t count)
+{
+    if (count < 2) {
+        ax_puts("uso: appinfo <aplicacion>\n");
+        return;
+    }
+    int idx = ax_axc_find(args[1]);
+    if (idx < 0) {
+        ax_puts("appinfo: aplicacion no encontrada\n");
+        return;
+    }
+    shell_print_axc_info(idx);
 }
 
 /* ls: listado de un directorio.  Sin flags lista solo los nombres; con -l
@@ -1418,6 +1922,9 @@ static void cmd_ls(char** args, size_t count)
         return;
     }
 
+    /* -a muestra tambien las aplicaciones ocultas. */
+    g_hide_apps = !all;
+
     if (long_fmt) {
         /* Listado detallado: atributos, tamano y fecha (mismo formato que
            el comando "dir"). */
@@ -1436,6 +1943,9 @@ static void cmd_ls(char** args, size_t count)
             int rc = ax_fs_disk_readdir(path, i, &de);
             if (rc != 0) {
                 break;
+            }
+            if (g_hide_apps && shell_dos_is_exec(de.name)) {
+                continue;
             }
             ax_puts(de.name);
             ax_putc('\n');
@@ -1487,6 +1997,9 @@ static void cmd_ls(char** args, size_t count)
                 child[k] = rem[k];
             }
             child[n] = '\0';
+            if (g_hide_apps && shell_dos_is_exec(child)) {
+                continue;
+            }
             ax_puts(child);
             ax_putc('\n');
         }
@@ -1925,6 +2438,7 @@ static void cmd_logout_cmd(void)
 {
     ax_user_logout();
     shell_login_loop();
+    shell_enter_session();
 }
 
 static void cmd_adduser_cmd(char** args, size_t count)
@@ -2320,10 +2834,15 @@ static void shell_execute(char* line)
     else if (shell_streq(cmd, "apps"))   cmd_apps();
     else if (shell_streq(cmd, "libs"))   cmd_libs();
     else if (shell_streq(cmd, "mods"))   cmd_mods();
+    else if (shell_streq(cmd, "sysfiles")) cmd_sysfiles();
+    else if (shell_streq(cmd, "sysload"))  cmd_sysload(args, count);
     else if (shell_streq(cmd, "services")) cmd_services();
     else if (shell_streq(cmd, "service"))  cmd_service(args, count);
     else if (shell_streq(cmd, "mem"))    cmd_mem();
     else if (shell_streq(cmd, "heap"))   cmd_heap();
+    else if (shell_streq(cmd, "pageinfo")) cmd_pageinfo();
+    else if (shell_streq(cmd, "swap"))     cmd_swap(args, count);
+    else if (shell_streq(cmd, "more"))     cmd_more(args, count);
     else if (shell_streq(cmd, "uptime")) cmd_uptime();
     else if (shell_streq(cmd, "threads")) cmd_threads();
     else if (shell_streq(cmd, "vm"))     cmd_vm();
@@ -2335,6 +2854,10 @@ static void shell_execute(char* line)
     else if (shell_streq(cmd, "pwd"))    cmd_pwd();
     else if (shell_streq(cmd, "type"))   cmd_type(args, count);
     else if (shell_streq(cmd, "cat"))    cmd_type(args, count);
+    else if (shell_streq(cmd, "ini"))    cmd_ini(args, count);
+    else if (shell_streq(cmd, "desktop")) cmd_desktop(args, count);
+    else if (shell_streq(cmd, "axc"))    cmd_axc(args, count);
+    else if (shell_streq(cmd, "appinfo")) cmd_appinfo(args, count);
     else if (shell_streq(cmd, "ls"))    cmd_ls(args, count);
     else if (shell_streq(cmd, "copy"))   cmd_copy(args, count);
     else if (shell_streq(cmd, "ren"))    cmd_ren(args, count);
@@ -2376,6 +2899,7 @@ static void shell_execute(char* line)
     else if (shell_streq(cmd, "users"))  cmd_users_list();
     else if (shell_streq(cmd, "login"))  cmd_login_cmd(args, count);
     else if (shell_streq(cmd, "logout")) cmd_logout_cmd();
+    else if (shell_streq(cmd, "exit"))   cmd_logout_cmd();   /* cierra sesion */
     else if (shell_streq(cmd, "adduser")) cmd_adduser_cmd(args, count);
     else if (shell_streq(cmd, "reboot")) cmd_reboot();
     else if (shell_streq(cmd, "poweroff") || shell_streq(cmd, "shutdown") || shell_streq(cmd, "halt")) { extern void ax_poweroff(void); ax_poweroff(); }
@@ -2595,6 +3119,63 @@ static void shell_login_loop(void)
     }
 }
 
+/* Ruta de la carpeta de usuario: /home/<usuario>. */
+static void shell_home_path(const char* user, char* out, size_t max)
+{
+    size_t j = 0;
+    const char* prefix = "/home/";
+    for (size_t i = 0; prefix[i] && j + 1 < max; ++i) {
+        out[j++] = prefix[i];
+    }
+    for (size_t i = 0; user[i] && j + 1 < max; ++i) {
+        out[j++] = user[i];
+    }
+    out[j] = '\0';
+}
+
+/*
+ * Tras iniciar sesion se crea (si el volumen lo permite) y se entra en la
+ * carpeta del usuario.  El initrd es de solo lectura: si la carpeta no
+ * existe, se queda en la raiz.
+ */
+static void shell_enter_session(void)
+{
+    AxUser* u = ax_user_current();
+    if (!u) {
+        return;
+    }
+
+    char home[160];
+    shell_home_path(u->username, home, sizeof(home));
+
+    if (ax_fs_disk_mounted()) {
+        ax_fs_disk_mkdir("/home");
+        ax_fs_disk_mkdir(home);
+    }
+
+    bool ok = false;
+    uint32_t type = 0;
+    if (ax_fs_disk_mounted()) {
+        ok = (ax_fs_disk_stat(home, &type, nullptr) == 0 &&
+              type == AXFS_DISK_TYPE_DIR);
+    } else {
+        ok = (ax_vfs_exists(home) && shell_vfs_is_dir(home));
+    }
+
+    if (!ok) {
+        g_cwd[0] = '/';
+        g_cwd[1] = '\0';
+        return;
+    }
+
+    size_t i = 0;
+    while (home[i] && i + 1 < sizeof(g_cwd)) {
+        g_cwd[i] = home[i];
+        i++;
+    }
+    g_cwd[i] = '\0';
+}
+
 void ax_shell_thread(void* arg)
 {
     (void)arg;
@@ -2609,6 +3190,9 @@ void ax_shell_thread(void* arg)
     } else if (!ax_user_current()) {
         shell_login_loop();
     }
+
+    /* Se entra en la carpeta del usuario (/home/<usuario>). */
+    shell_enter_session();
 
     /* La pantalla del arranque se limpia: solo queda el prompt. */
     shell_clear_console();

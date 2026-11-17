@@ -80,6 +80,7 @@ add_custom_target(bootloader DEPENDS ${STAGE1} ${STAGE2})
 # ---------------------------------------------------------------------------
 file(GLOB TOOL_SRCS CONFIGURE_DEPENDS ${ROOT}/tools/*.cpp)
 set(TOOL_BINS)
+set(TOOL_TARGETS)
 foreach(src ${TOOL_SRCS})
     get_filename_component(name ${src} NAME_WE)
     set(bin ${TOOLS}/${name})
@@ -91,13 +92,15 @@ foreach(src ${TOOL_SRCS})
         OUTPUT_NAME ${name}
         RUNTIME_OUTPUT_DIRECTORY ${TOOLS})
     list(APPEND TOOL_BINS ${bin})
+    list(APPEND TOOL_TARGETS ${name}_tool)
 endforeach()
-add_custom_target(tools DEPENDS ${TOOL_BINS})
+add_custom_target(tools DEPENDS ${TOOL_TARGETS})
 set(MKDISK ${TOOLS}/mkdisk)
 set(MKINITRAMFS ${TOOLS}/mkinitramfs)
 set(MKMOD ${TOOLS}/mkmod)
 set(MKAXE ${TOOLS}/mkaxe)
 set(MKAXL ${TOOLS}/mkaxl)
+set(MKSYS ${TOOLS}/mksys)
 
 # ---------------------------------------------------------------------------
 # 3. Compilador Axolyn (axc) y runner (axrun)
@@ -200,6 +203,26 @@ endforeach()
 add_custom_target(modules DEPENDS ${MODULE_AXMODS})
 
 # ---------------------------------------------------------------------------
+# 5b. Archivos de sistema protegidos (.axsys)
+# ---------------------------------------------------------------------------
+file(GLOB SYSFILE_SRCS CONFIGURE_DEPENDS ${ROOT}/apps/sysfiles/*.sys)
+set(SYSFILE_OBJS)
+foreach(src ${SYSFILE_SRCS})
+    get_filename_component(name ${src} NAME_WE)
+    set(out ${BUILD}/system/${name}.axsys)
+    add_custom_command(
+        OUTPUT ${out}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${BUILD}/system
+        COMMAND ${MKSYS} ${src} ${out} ${name} "AxolynOS" "AxolynOS Project"
+                "Archivo de sistema de AxolynOS" -t data
+                -k version=1.0 -k type=system
+        DEPENDS ${src} ${MKSYS} tools
+        COMMENT "Empaquetando ${name}.axsys")
+    list(APPEND SYSFILE_OBJS ${out})
+endforeach()
+add_custom_target(sysfiles DEPENDS ${SYSFILE_OBJS})
+
+# ---------------------------------------------------------------------------
 # 6. Biblioteca de usuario (libaxos.a + libaxos.axl)
 # ---------------------------------------------------------------------------
 file(GLOB LIB_SRCS CONFIGURE_DEPENDS ${ROOT}/apis/src/*.cpp ${ROOT}/apis/src/*.S)
@@ -281,17 +304,25 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E rm -rf ${STAGE}
     COMMAND ${CMAKE_COMMAND} -E make_directory
             ${STAGE}/apps ${STAGE}/modules ${STAGE}/etc
-            ${STAGE}/lib ${STAGE}/help ${STAGE}/install
+            ${STAGE}/lib ${STAGE}/help ${STAGE}/install ${STAGE}/system
+            ${STAGE}/config ${STAGE}/tmp ${STAGE}/usr ${STAGE}/home
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${BUILD}/apps ${STAGE}/apps
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${BUILD}/lib ${STAGE}/lib
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${BUILD}/modules ${STAGE}/modules
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${BUILD}/system
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${BUILD}/system ${STAGE}/system
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ROOT}/apps/help/README.axh ${STAGE}/help/README.axh
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ROOT}/apps/help/help.axh ${STAGE}/help/help.axh
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ROOT}/apps/help/shell.axh ${STAGE}/help/shell.axh
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ROOT}/apps/ini/ejemplo.ini ${STAGE}/system/ejemplo.ini
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ROOT}/apps/ini/desktop.ini ${STAGE}/apps/desktop.ini
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${ROOT}/apps/config ${STAGE}/config
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ROOT}/apps/root/usr/README.TXT ${STAGE}/usr/README.TXT
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ROOT}/apps/root/etc/hostname ${STAGE}/etc/hostname
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${MOTD} ${STAGE}/etc/motd
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${STAGE1} ${STAGE2} ${AXOLYN_ELF} ${STAGE}/install/
     COMMAND ${MKINITRAMFS} ${STAGE} ${INITRD}
-    DEPENDS apps userlib modules ${STAGE1} ${STAGE2} ${MKINITRAMFS} tools axolyn_kernel
+    DEPENDS apps userlib modules sysfiles ${STAGE1} ${STAGE2} ${MKINITRAMFS} tools axolyn_kernel
     COMMENT "Generando build/initrd.axfs")
 add_custom_target(initrd DEPENDS ${INITRD})
 

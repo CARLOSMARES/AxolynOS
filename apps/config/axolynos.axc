@@ -1,0 +1,12 @@
+# Configuracion del sistema AxolynOS
+[app]
+name        = AxolynOS
+version     = 0.1.0
+publisher   = AxolynOS Project
+exec        = /system/axolyn.elf
+icon        = /system/icons/axolynos.ico
+description = Sistema operativo experimental
+
+[connections]
+config      = ini
+sysfiles    = axsys

@@ -1,0 +1,11 @@
+# Configuracion de la aplicacion sysinfo
+[app]
+name        = sysinfo
+version     = 1.0.3
+publisher   = AxolynOS Project
+exec        = /apps/sysinfo.axe
+icon        = /system/icons/sysinfo.ico
+description = Informacion del sistema
+
+[connections]
+depends     = libaxos

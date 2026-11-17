@@ -42,6 +42,10 @@
 #include "axos/vm.h"
 #include "axos/mem.h"
 #include "axos/time.h"
+#include "axos/paging.h"
+#include "axos/sysfile.h"
+#include "axos/ini.h"
+#include "axos/axc.h"
 
 namespace axos {
 

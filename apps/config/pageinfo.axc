@@ -1,0 +1,12 @@
+# Configuracion de la aplicacion pageinfo
+[app]
+name        = pageinfo
+version     = 0.9.0
+publisher   = AxolynOS Project
+exec        = /apps/pageinfo.axe
+icon        = /system/icons/pageinfo.ico
+description = Estado de la paginacion y el swap
+
+[connections]
+depends     = libaxos
+open        = axolynos.axc

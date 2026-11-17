@@ -37,6 +37,10 @@
 #include "ax_rtc.h"
 #include "ax_crypto.h"
 #include "ax_user.h"
+#include "ax_paging.h"
+#include "ax_sysfile.h"
+#include "ax_ini.h"
+#include "ax_axc.h"
 
 /* ------------------------------------------------------------------ */
 /* Tabla de handlers                                                   */
@@ -49,7 +53,7 @@
  *
  * Los modulos registran las suyas con ax_syscall_register().
  */
-#define AX_SYSCALL_TABLE_SIZE  64
+#define AX_SYSCALL_TABLE_SIZE  96
 #define AX_MODULE_SYSCALL_BASE 100
 #define AX_MODULE_SYSCALL_MAX  64
 
@@ -857,6 +861,234 @@ static int sys_log(uint64_t* args, uint64_t* ret)
 }
 
 /* ------------------------------------------------------------------ */
+/* Paginacion por demanda y swap                                       */
+/* ------------------------------------------------------------------ */
+static int sys_pageinfo(uint64_t* args, uint64_t* ret)
+{
+    uint64_t out = args[0];
+    if (!ax_user_ptr_ok(out, sizeof(AxPagingInfo))) {
+        return AX_EINVAL;
+    }
+    ax_paging_fill_info((AxPagingInfo*)(uintptr_t)out);
+    (void)ret;
+    return 0;
+}
+
+static int sys_swap_out(uint64_t* args, uint64_t* ret)
+{
+    (void)ret;
+    return ax_paging_evict_page(args[0]);
+}
+
+static int sys_swap_enable(uint64_t* args, uint64_t* ret)
+{
+    char path[192];
+    const char* p = nullptr;
+    if (args[0]) {
+        if (!ax_user_str(args[0], path, sizeof(path))) {
+            return AX_EINVAL;
+        }
+        p = path;
+    }
+    (void)ret;
+    return ax_paging_swap_enable(p);
+}
+
+static int sys_swap_disable(uint64_t* args, uint64_t* ret)
+{
+    (void)args;
+    (void)ret;
+    return ax_paging_swap_disable();
+}
+
+/* ------------------------------------------------------------------ */
+/* Archivos de sistema .axsys                                          */
+/* ------------------------------------------------------------------ */
+static int sys_sysfile_list(uint64_t* args, uint64_t* ret)
+{
+    uint64_t out = args[1];
+    if (!ax_user_ptr_ok(out, sizeof(AxSysFileInfo))) {
+        return AX_EINVAL;
+    }
+    int rc = ax_sysfile_info((uint32_t)args[0], (AxSysFileInfo*)(uintptr_t)out);
+    *ret = 0;
+    return rc == 0 ? 0 : AX_ENOENT;
+}
+
+static int sys_sysfile_load(uint64_t* args, uint64_t* ret)
+{
+    char path[256];
+    if (!ax_user_str(args[0], path, sizeof(path))) {
+        return AX_EINVAL;
+    }
+    int rc = ax_sysfile_load(path);
+    if (rc < 0) {
+        return rc;
+    }
+    *ret = (uint64_t)rc;
+    return 0;
+}
+
+static int sys_sysfile_meta(uint64_t* args, uint64_t* ret)
+{
+    char key[AX_SYSFILE_META_KEY];
+    if (!ax_user_str(args[1], key, sizeof(key))) {
+        return AX_EINVAL;
+    }
+    uint64_t buf = args[2];
+    uint64_t max = args[3];
+    if (max == 0 || !ax_user_ptr_ok(buf, max)) {
+        return AX_EINVAL;
+    }
+    int rc = ax_sysfile_meta((uint32_t)args[0], key,
+                             (char*)(uintptr_t)buf, max);
+    *ret = 0;
+    return rc == 0 ? 0 : AX_ENOENT;
+}
+
+/* ------------------------------------------------------------------ */
+/* Ficheros INI                                                        */
+/* ------------------------------------------------------------------ */
+static int sys_ini_parse(uint64_t* args, uint64_t* ret)
+{
+    char path[256];
+    if (!ax_user_str(args[0], path, sizeof(path))) {
+        return AX_EINVAL;
+    }
+    int rc = ax_ini_load(path);
+    if (rc < 0) {
+        return rc;
+    }
+    *ret = (uint64_t)rc;
+    return 0;
+}
+
+static int sys_ini_get(uint64_t* args, uint64_t* ret)
+{
+    char section[AX_INI_NAME_MAX];
+    char key[AX_INI_NAME_MAX];
+    if (!ax_user_str(args[0], section, sizeof(section)) ||
+        !ax_user_str(args[1], key, sizeof(key))) {
+        return AX_EINVAL;
+    }
+    uint64_t buf = args[2];
+    uint64_t max = args[3];
+    if (max == 0 || !ax_user_ptr_ok(buf, max)) {
+        return AX_EINVAL;
+    }
+    int rc = ax_ini_get(section, key, (char*)(uintptr_t)buf, max);
+    *ret = 0;
+    return rc == 0 ? 0 : AX_ENOENT;
+}
+
+static int sys_ini_set(uint64_t* args, uint64_t* ret)
+{
+    char section[AX_INI_NAME_MAX];
+    char key[AX_INI_NAME_MAX];
+    char value[AX_INI_VALUE_MAX];
+    if (!ax_user_str(args[0], section, sizeof(section)) ||
+        !ax_user_str(args[1], key, sizeof(key)) ||
+        !ax_user_str(args[2], value, sizeof(value))) {
+        return AX_EINVAL;
+    }
+    *ret = 0;
+    return ax_ini_set(section, key, value) == 0 ? 0 : AX_ENOSPC;
+}
+
+static int sys_ini_enum(uint64_t* args, uint64_t* ret)
+{
+    uint64_t out = args[1];
+    if (!ax_user_ptr_ok(out, sizeof(AxIniEntry))) {
+        return AX_EINVAL;
+    }
+    int rc = ax_ini_enum((uint32_t)args[0], (AxIniEntry*)(uintptr_t)out);
+    *ret = 0;
+    return rc == 0 ? 0 : AX_ENOENT;
+}
+
+static int sys_ini_save(uint64_t* args, uint64_t* ret)
+{
+    char path[256];
+    if (!ax_user_str(args[0], path, sizeof(path))) {
+        return AX_EINVAL;
+    }
+    *ret = 0;
+    return ax_ini_save(path) == 0 ? 0 : AX_EIO;
+}
+
+/* ------------------------------------------------------------------ */
+/* Configuracion de aplicaciones .axc                                  */
+/* ------------------------------------------------------------------ */
+static int sys_axc_list(uint64_t* args, uint64_t* ret)
+{
+    uint64_t out = args[1];
+    if (!ax_user_ptr_ok(out, sizeof(AxcInfo))) {
+        return AX_EINVAL;
+    }
+    int rc = ax_axc_info((uint32_t)args[0], (AxcInfo*)(uintptr_t)out);
+    *ret = 0;
+    return rc == 0 ? 0 : AX_ENOENT;
+}
+
+static int sys_axc_load(uint64_t* args, uint64_t* ret)
+{
+    char path[256];
+    if (!ax_user_str(args[0], path, sizeof(path))) {
+        return AX_EINVAL;
+    }
+    int rc = ax_axc_load(path);
+    if (rc < 0) {
+        return rc;
+    }
+    *ret = (uint64_t)rc;
+    return 0;
+}
+
+static int sys_axc_conn(uint64_t* args, uint64_t* ret)
+{
+    uint64_t out = args[2];
+    if (!ax_user_ptr_ok(out, sizeof(AxcConnection))) {
+        return AX_EINVAL;
+    }
+    int rc = ax_axc_conn((uint32_t)args[0], (uint32_t)args[1],
+                         (AxcConnection*)(uintptr_t)out);
+    *ret = 0;
+    return rc == 0 ? 0 : AX_ENOENT;
+}
+
+static int sys_axc_find(uint64_t* args, uint64_t* ret)
+{
+    char name[AX_AXC_NAME_LEN];
+    if (!ax_user_str(args[0], name, sizeof(name))) {
+        return AX_EINVAL;
+    }
+    int rc = ax_axc_find(name);
+    if (rc < 0) {
+        return AX_ENOENT;
+    }
+    *ret = (uint64_t)rc;
+    return 0;
+}
+
+static int sys_axc_connection(uint64_t* args, uint64_t* ret)
+{
+    char name[AX_AXC_NAME_LEN];
+    char key[AX_AXC_KEY_LEN];
+    if (!ax_user_str(args[0], name, sizeof(name)) ||
+        !ax_user_str(args[1], key, sizeof(key))) {
+        return AX_EINVAL;
+    }
+    uint64_t buf = args[2];
+    uint64_t max = args[3];
+    if (max == 0 || !ax_user_ptr_ok(buf, max)) {
+        return AX_EINVAL;
+    }
+    int rc = ax_axc_connection(name, key, (char*)(uintptr_t)buf, max);
+    *ret = 0;
+    return rc == 0 ? 0 : AX_ENOENT;
+}
+
+/* ------------------------------------------------------------------ */
 /* Registro y despacho                                                 */
 /* ------------------------------------------------------------------ */
 int ax_syscall_register(uint64_t nr, ax_syscall_handler handler)
@@ -981,6 +1213,31 @@ void ax_syscall_init(void)
     ax_syscall_register(AX_SYS_USER_PASSWD,  sys_user_passwd);
     ax_syscall_register(AX_SYS_USER_VERIFY,  sys_user_verify);
     ax_syscall_register(AX_SYS_LOG,          sys_log);
+
+    /* --- Paginacion por demanda y swap ------------------------------ */
+    ax_syscall_register(AX_SYS_PAGEINFO,     sys_pageinfo);
+    ax_syscall_register(AX_SYS_SWAP_OUT,     sys_swap_out);
+    ax_syscall_register(AX_SYS_SWAP_ENABLE,  sys_swap_enable);
+    ax_syscall_register(AX_SYS_SWAP_DISABLE, sys_swap_disable);
+
+    /* --- Archivos de sistema .axsys --------------------------------- */
+    ax_syscall_register(AX_SYS_SYSFILE_LIST, sys_sysfile_list);
+    ax_syscall_register(AX_SYS_SYSFILE_LOAD, sys_sysfile_load);
+    ax_syscall_register(AX_SYS_SYSFILE_META, sys_sysfile_meta);
+
+    /* --- Ficheros INI ----------------------------------------------- */
+    ax_syscall_register(AX_SYS_INI_PARSE,    sys_ini_parse);
+    ax_syscall_register(AX_SYS_INI_GET,      sys_ini_get);
+    ax_syscall_register(AX_SYS_INI_SET,      sys_ini_set);
+    ax_syscall_register(AX_SYS_INI_ENUM,     sys_ini_enum);
+    ax_syscall_register(AX_SYS_INI_SAVE,     sys_ini_save);
+
+    /* --- Configuracion de aplicaciones .axc ------------------------- */
+    ax_syscall_register(AX_SYS_AXC_LIST,     sys_axc_list);
+    ax_syscall_register(AX_SYS_AXC_LOAD,     sys_axc_load);
+    ax_syscall_register(AX_SYS_AXC_CONN,     sys_axc_conn);
+    ax_syscall_register(AX_SYS_AXC_FIND,     sys_axc_find);
+    ax_syscall_register(AX_SYS_AXC_CONNECTION, sys_axc_connection);
 }
 
 /* ------------------------------------------------------------------ */

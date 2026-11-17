@@ -679,6 +679,77 @@ int ax_fs_disk_read_at(const char* path, uint64_t offset, void* buf,
     return 0;
 }
 
+int ax_fs_disk_write_at(const char* path, uint64_t offset, const void* data,
+                        uint64_t size, uint64_t* out)
+{
+    if (out) {
+        *out = 0;
+    }
+    if (!fs_valid()) {
+        return AX_ENOENT;
+    }
+    if (!data || size == 0) {
+        return AX_EINVAL;
+    }
+
+    char name[AXFS_DISK_NAME_MAX];
+    int rc = fs_norm(path, name, sizeof(name));
+    if (rc != 0) {
+        return rc;
+    }
+    AxfsDiskEntry* e = fs_find(name);
+    if (!e) {
+        return AX_ENOENT;
+    }
+    if (e->type != AXFS_DISK_TYPE_FILE) {
+        return AX_EINVAL;
+    }
+    if (offset >= e->size) {
+        return AX_EINVAL;
+    }
+    if (size > e->size - offset) {
+        return AX_EINVAL;
+    }
+
+    const uint8_t* src = (const uint8_t*)data;
+    uint64_t done = 0;
+    while (done < size) {
+        uint64_t absolute = offset + done;
+        uint64_t b = absolute / AXFS_DISK_BLOCK_SIZE;
+        uint64_t in_block = absolute % AXFS_DISK_BLOCK_SIZE;
+        uint64_t chunk = size - done;
+        if (chunk > AXFS_DISK_BLOCK_SIZE - in_block) {
+            chunk = AXFS_DISK_BLOCK_SIZE - in_block;
+        }
+
+        uint64_t lba = g_super.data_lba +
+                       (e->first_block + b) * AXFS_DISK_BLOCK_SECT;
+        if (in_block == 0 && chunk == AXFS_DISK_BLOCK_SIZE) {
+            /* Bloque completo: escritura directa. */
+            if (ax_disk_write(g_drive, lba, AXFS_DISK_BLOCK_SECT,
+                              src + done) != 0) {
+                return AX_EIO;
+            }
+        } else {
+            /* Escritura parcial: se lee el bloque, se modifica y se
+               escribe de vuelta. */
+            if (ax_disk_read(g_drive, lba, AXFS_DISK_BLOCK_SECT, g_block) != 0) {
+                return AX_EIO;
+            }
+            fs_memcpy(g_block + in_block, src + done, chunk);
+            if (ax_disk_write(g_drive, lba, AXFS_DISK_BLOCK_SECT, g_block) != 0) {
+                return AX_EIO;
+            }
+        }
+        done += chunk;
+    }
+
+    if (out) {
+        *out = done;
+    }
+    return 0;
+}
+
 int ax_fs_disk_unlink(const char* path)
 {
     if (!fs_valid()) {

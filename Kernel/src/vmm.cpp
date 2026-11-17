@@ -140,35 +140,52 @@ static uint64_t ax_vmm_walk_find(uint64_t virt)
 }
 
 /* ------------------------------------------------------------------ */
-/* API de mapeo                                                        */
+/* Division de paginas grandes                                         */
 /* ------------------------------------------------------------------ */
-void* ax_vmm_map(uint64_t virt, uint64_t phys, uint64_t flags)
+/*
+ * Si la direccion cae dentro de una pagina de 2 MiB ya existente, la
+ * sustituye por una tabla de paginas de 4 KiB que reproduce los permisos.
+ * Es imprescindible para poder mapear o desmapear paginas individuales de
+ * la region de user mode (el mapa inicial usa paginas de 2 MiB ahi).
+ * Devuelve 0 o -1 si no hay memoria para la tabla.
+ */
+static int ax_vmm_split_2m(uint64_t virt)
 {
-    /* Si la direccion cae dentro de una pagina de 2 MiB ya existente hay que
-       sustituirla por una tabla de paginas: primero la localizamos en el
-       nivel 2 (directorio de paginas). */
     uint64_t pd = ax_vmm_table_at(virt, 2, true);
     if (!pd) {
-        return nullptr;
+        return -1;
     }
     uint64_t pd_index = (virt >> 21) & 0x1FF;
     uint64_t* pd_entry = (uint64_t*)(pd + pd_index * 8);
 
-    if (*pd_entry & 0x80) {
-        /* Reproducimos la pagina de 2 MiB en 512 paginas de 4 KiB para no
-           perder lo que ya estaba mapeado. */
-        uint64_t base = ax_vmm_pte_addr(*pd_entry);
-        uint64_t entry_flags = *pd_entry & 0x0F;   /* permisos de la pagina */
+    if (!(*pd_entry & 0x80)) {
+        return 0;
+    }
 
-        uint64_t* new_pt = ax_vmm_alloc_table();
-        if (!new_pt) {
-            return nullptr;
-        }
-        for (uint64_t i = 0; i < 512; ++i) {
-            new_pt[i] = (base + i * AX_PAGE_SIZE) | entry_flags;
-        }
-        *pd_entry = (uint64_t)(uintptr_t)new_pt | AX_PAGE_PRESENT | AX_PAGE_WRITE |
-                    (entry_flags & AX_PAGE_USER);
+    /* Reproducimos la pagina de 2 MiB en 512 paginas de 4 KiB para no
+       perder lo que ya estaba mapeado. */
+    uint64_t base = ax_vmm_pte_addr(*pd_entry);
+    uint64_t entry_flags = *pd_entry & 0x0F;   /* permisos de la pagina */
+
+    uint64_t* new_pt = ax_vmm_alloc_table();
+    if (!new_pt) {
+        return -1;
+    }
+    for (uint64_t i = 0; i < 512; ++i) {
+        new_pt[i] = (base + i * AX_PAGE_SIZE) | entry_flags;
+    }
+    *pd_entry = (uint64_t)(uintptr_t)new_pt | AX_PAGE_PRESENT | AX_PAGE_WRITE |
+                (entry_flags & AX_PAGE_USER);
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* API de mapeo                                                        */
+/* ------------------------------------------------------------------ */
+void* ax_vmm_map(uint64_t virt, uint64_t phys, uint64_t flags)
+{
+    if (ax_vmm_split_2m(virt) != 0) {
+        return nullptr;
     }
 
     uint64_t pt = ax_vmm_walk_create(virt);
@@ -204,6 +221,12 @@ void* ax_vmm_map_2m(uint64_t virt, uint64_t phys, uint64_t flags)
 
 int ax_vmm_unmap(uint64_t virt)
 {
+    /* Si la direccion esta dentro de una pagina de 2 MiB hay que dividirla
+       antes de poder limpiar la entrada de 4 KiB. */
+    if (ax_vmm_split_2m(virt) != 0) {
+        return -1;
+    }
+
     uint64_t pt = ax_vmm_walk_find(virt);
     if (!pt) {
         return -1;

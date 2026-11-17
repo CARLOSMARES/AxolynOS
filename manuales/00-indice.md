@@ -18,6 +18,11 @@ practicas para extenderlo.
 | 10 | [Bytecode y maquina virtual](10-bytecode-vm.md) | Quien toque la VM |
 | 11 | [El compilador axc](11-compilador.md) | Quien mejore el compilador |
 | 12 | [Depuracion](12-depuracion.md) | Todos |
+| 13 | [Servicios](13-servicios.md) | Quien anada subsistemas |
+| 14 | [Sistema de paginacion](14-paginacion.md) | Memoria virtual, swap y paginacion de salida |
+| 15 | [Archivos .axsys](15-axsys.md) | Contenedores de sistema protegidos |
+| 16 | [Ficheros INI y desktop.ini](16-ini.md) | Configuracion de carpetas y claves |
+| 17 | [Archivos .axc](17-axc.md) | Manifiesto de aplicacion y estructura del sistema |
 
 ## Mapa rapido del codigo
 
@@ -28,6 +33,7 @@ Kernel/src/idt.cpp        IDT, puerta de syscall 0x80 (DPL 3)
 Kernel/src/isr_stubs.S   trampolines de interrupcion y de syscall
 Kernel/src/pmm.cpp        gestor de memoria fisica (bitmap)
 Kernel/src/vmm.cpp        paginacion de 4 niveles
+Kernel/src/paging.cpp     paginacion por demanda y swap
 Kernel/src/heap.cpp       heap del kernel (kmalloc/kfree)
 Kernel/src/sched.cpp      planificador round-robin e hilos
 Kernel/src/syscall.cpp    despacho de llamadas al sistema
@@ -36,6 +42,9 @@ Kernel/src/elf.cpp        cargador ELF64 para user mode
 Kernel/src/proc.cpp       procesos de user mode
 Kernel/include/ax_pkg.h   formatos .axe/.axl y CRC32
 Kernel/src/module.cpp     carga y descarga de modulos
+Kernel/src/sysfile.cpp    archivos de sistema protegidos .axsys
+Kernel/src/ini.cpp        analizador INI y desktop.ini
+Kernel/src/axc.cpp        configuracion de aplicaciones .axc
 Kernel/src/vmhost.cpp     integracion de la VM de bytecode
 Kernel/vm/axvm.cpp        la maquina virtual (tambien se usa en el host)
 Kernel/modules/           modulos de ejemplo
@@ -43,9 +52,10 @@ Kernel/bootloader/        stage1.asm y stage2.asm (NASM)
 apis/                     libaxos: API de usuario
 apps/                     aplicaciones nativas (C++) y Axolyn (bytecode)
 compiladores/axc/         el compilador del lenguaje Axolyn
-scripts/tools/mkaxe.cpp   empaquetador de ejecutables .axe
-scripts/tools/mkaxl.cpp   empaquetador de bibliotecas .axl
-scripts/tools/axl2a.cpp   extractor del archivo ar de un .axl
+tools/mkaxe.cpp           empaquetador de ejecutables .axe
+tools/mkaxl.cpp           empaquetador de bibliotecas .axl
+tools/mksys.cpp           empaquetador de archivos de sistema .axsys
+tools/axl2a.cpp           extractor del archivo ar de un .axl
 scripts/                  instalacion, compilacion, ejecucion y pruebas
 ```
 

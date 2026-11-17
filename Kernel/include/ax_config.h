@@ -119,7 +119,7 @@
 /* Syscalls                                                            */
 /* ------------------------------------------------------------------ */
 #define AX_SYSCALL_VECTOR       0x80
-#define AX_SYSCALL_MAX          64
+#define AX_SYSCALL_MAX          96
 
 /* ------------------------------------------------------------------ */
 /* Planificacion / hilos                                               */

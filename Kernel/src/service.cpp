@@ -16,6 +16,10 @@
 #include "ax_install.h"
 #include "ax_gc.h"
 #include "ax_net.h"
+#include "ax_paging.h"
+#include "ax_sysfile.h"
+#include "ax_ini.h"
+#include "ax_axc.h"
 
 struct Service {
     char     name[AX_SERVICE_NAME];
@@ -98,6 +102,10 @@ static void svc_registry(void) { ax_registry_init(); }
 static void svc_install(void)  { ax_install_init(); }
 static void svc_gc(void)       { ax_gc_init(); }
 static void svc_net(void)      { ax_net_init(); }
+static void svc_paging(void)   { ax_paging_swap_enable(nullptr); }
+static void svc_sysfile(void)  { ax_sysfile_init(); ax_sysfile_autoload(); }
+static void svc_ini(void)      { ax_ini_clear(); }
+static void svc_axc(void)      { ax_axc_init(); ax_axc_autoload(); }
 
 /* ------------------------------------------------------------------ */
 /* API                                                                 */
@@ -136,6 +144,10 @@ void ax_service_init(void)
     ax_service_register("install", "instalador y formateador", true, svc_install, 0);
     ax_service_register("gc", "recolector de recursos", true, svc_gc, 0);
     ax_service_register("network", "pila TCP/IP e1000", true, svc_net, 0);
+    ax_service_register("paging", "paginacion por demanda y swap", true, svc_paging, 0);
+    ax_service_register("sysfiles", "archivos de sistema .axsys", true, svc_sysfile, 0);
+    ax_service_register("ini", "ficheros INI y desktop.ini", true, svc_ini, 0);
+    ax_service_register("axc", "configuracion de aplicaciones .axc", true, svc_axc, 0);
 
     ax_service_register("shell", "shell del sistema", false, 0, 0);
     ax_service_mark_started("shell");

@@ -115,6 +115,12 @@ endef
 $(foreach m,$(MODULE_NAMES),$(eval $(call MODULE_RULES,$(m),$(mod_slot)))$(eval mod_slot := $(shell expr $(mod_slot) + 1)))
 
 # --------------------------------------------------------------------------
+# Archivos de sistema protegidos (.axsys)
+# --------------------------------------------------------------------------
+SYSFILE_SRCS := $(wildcard apps/sysfiles/*.sys)
+SYSFILE_OBJS := $(patsubst apps/sysfiles/%.sys,$(BUILD)/system/%.axsys,$(SYSFILE_SRCS))
+
+# --------------------------------------------------------------------------
 # Objetivos de alto nivel
 # --------------------------------------------------------------------------
 .PHONY: all bootloader tools compiler kernel modules lib apps initrd image uefi iso \
@@ -195,6 +201,14 @@ $(OBJ)/mod/%.o: Kernel/modules/%.S
 	$(AS) --64 -o $@ $<
 
 # --------------------------------------------------------------------------
+# 5b. Archivos de sistema protegidos (.axsys)
+# --------------------------------------------------------------------------
+$(BUILD)/system/%.axsys: apps/sysfiles/%.sys $(TOOLS)/mksys
+	@mkdir -p $(BUILD)/system
+	$(TOOLS)/mksys $< $@ $(basename $(notdir $<)) "AxolynOS" "AxolynOS Project" \
+		"Archivo de sistema de AxolynOS" -t data -k version=1.0 -k type=system
+
+# --------------------------------------------------------------------------
 # 6. Biblioteca de usuario (libaxos.a + libaxos.axl)
 # --------------------------------------------------------------------------
 $(OBJ)/lib/%.o: %.cpp
@@ -233,11 +247,14 @@ $(BUILD)/apps/%.axb: apps/axolyn/%.ax $(BUILD)/axc
 # --------------------------------------------------------------------------
 # 8. Initramfs (AXFS)
 # --------------------------------------------------------------------------
-$(BUILD)/initrd.axfs: $(APP_ELFS) $(APP_AXES) $(APP_AXB) $(MODULE_AXMOD) $(BUILD)/lib/libaxos.axl $(TOOLS)/mkinitramfs $(BUILD)/stage1.bin $(BUILD)/stage2.bin $(BUILD)/axolyn.elf
+$(BUILD)/initrd.axfs: $(APP_ELFS) $(APP_AXES) $(APP_AXB) $(MODULE_AXMOD) $(SYSFILE_OBJS) $(BUILD)/lib/libaxos.axl $(TOOLS)/mkinitramfs $(BUILD)/stage1.bin $(BUILD)/stage2.bin $(BUILD)/axolyn.elf
 	@rm -rf $(BUILD)/disk/root
 	@mkdir -p $(BUILD)/disk/root/apps $(BUILD)/disk/root/modules \
 	          $(BUILD)/disk/root/etc $(BUILD)/disk/root/lib \
-	          $(BUILD)/disk/root/help $(BUILD)/disk/root/install
+	          $(BUILD)/disk/root/help $(BUILD)/disk/root/install \
+	          $(BUILD)/disk/root/system $(BUILD)/disk/root/config \
+	          $(BUILD)/disk/root/tmp $(BUILD)/disk/root/usr \
+	          $(BUILD)/disk/root/home
 	@cp -f $(BUILD)/apps/*.elf $(BUILD)/disk/root/apps/ 2>/dev/null || true
 	@cp -f $(BUILD)/apps/*.axb $(BUILD)/disk/root/apps/ 2>/dev/null || true
 	@cp -f $(BUILD)/apps/*.axb $(BUILD)/disk/root/ 2>/dev/null || true
@@ -247,8 +264,14 @@ $(BUILD)/initrd.axfs: $(APP_ELFS) $(APP_AXES) $(APP_AXB) $(MODULE_AXMOD) $(BUILD
 	@cp -f apps/help/*.axh $(BUILD)/disk/root/help/ 2>/dev/null || true
 	@cp -f $(BUILD)/modules/*.axmod $(BUILD)/disk/root/modules/ 2>/dev/null || true
 	@cp -f apps/axolyn/*.ax $(BUILD)/disk/root/apps/ 2>/dev/null || true
+	@cp -f $(BUILD)/system/*.axsys $(BUILD)/disk/root/system/ 2>/dev/null || true
+	@cp -f apps/ini/ejemplo.ini $(BUILD)/disk/root/system/ 2>/dev/null || true
+	@cp -f apps/ini/desktop.ini $(BUILD)/disk/root/apps/ 2>/dev/null || true
+	@cp -f apps/config/*.axc $(BUILD)/disk/root/config/ 2>/dev/null || true
 	@cp -f $(BUILD)/stage1.bin $(BUILD)/stage2.bin $(BUILD)/axolyn.elf $(BUILD)/disk/root/install/
 	@printf 'AxolynOS - sistema experimental de microkernel.\nEscribe "help" para ver los comandos disponibles.\n' > $(BUILD)/disk/root/etc/motd
+	@cp -f apps/root/usr/README.TXT $(BUILD)/disk/root/usr/ 2>/dev/null || true
+	@cp -f apps/root/etc/hostname $(BUILD)/disk/root/etc/ 2>/dev/null || true
 	$(TOOLS)/mkinitramfs $(BUILD)/disk/root $@
 	@echo "[ok] $@ ($$(stat -c%s $@) bytes)"
 

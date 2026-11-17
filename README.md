@@ -7,7 +7,8 @@ la misma ISO híbrida.
 ## Características
 
 - **Arranque**: BIOS (stage1/stage2 + AXDSK) y UEFI (BOOTX64.EFI).
-- **Núcleo**: PMM/VMM, heap, GDT/IDT/PIC/PIT, planificador, hilos, syscalls, IPC.
+- **Núcleo**: PMM/VMM, paginacion por demanda con swap, heap, GDT/IDT/PIC/PIT,
+  planificador, hilos, syscalls, IPC.
 - **Sistemas de archivos**: VFS sobre initrd AxFS (en RAM) y AxFS-D en disco.
 - **Discos**: driver ATA PIO LBA28 y soporte AHCI.
 - **Instalador**: `install [n]` graba kernel, cargador e initrd en el disco y
@@ -19,15 +20,27 @@ la misma ISO híbrida.
   `vol`, `format`, `mount`, `install`, `gc`, `run`, `ax`, `reboot`,
   `poweroff`, `ifconfig`, `dhcp`, `ping`, `nslookup`, `wget`, `netstat`,
   `ls`, `whoami`, `users`, `man`, `apps`, `libs`, `mods`, `services`,
-  `service start|stop <nombre>`, `mem`, `heap`, `uptime`, `threads`, `vm`,
-  `edit`, `vi`, `vim`, `nvim`.
+  `service start|stop <nombre>`, `mem`, `heap`, `pageinfo`, `swap`,
+  `swapout <dir|all>`, `more`, `type /p`, `dir /p`, `ini`, `desktop`,
+  `sysfiles`, `sysload`, `axc`, `appinfo`, `uptime`, `threads`, `vm`,
+  `edit`, `vi`, `vim`, `nvim`, `logout`/`exit`.
+- **Sesion**: al arrancar pide usuario/clave; `exit` (o `logout`) cierra la
+  sesion y vuelve a pedir credenciales.  La shell entra en `/home/<usuario>`.
+- **Arbol del sistema**: `/apps`, `/config`, `/etc`, `/home`, `/lib`,
+  `/system`, `/tmp`, `/usr`.  Las aplicaciones quedan **ocultas** en `dir`/`ls`
+  (se ejecutan por nombre); `dir /a` o `ls -a` las muestran.
 - **Servicios**: gestor de servicios con arranque automático
   (`power`, `pci`, `disk`, `audio`, `video`, `users`, `signals`, `axfs`,
-  `userdb`, `registry`, `install`, `gc`, `network`…).
+  `userdb`, `registry`, `install`, `gc`, `network`, `paging`, `sysfiles`,
+  `ini`, `axc`…).
 - **Módulos del kernel**: `.axmod` con `_ax_module_entry(AxModuleContext*)`.
 - **Editores**: `edit` (tipo Notepad) y `vi`/`vim`/`nvim`.
 - **Red**: e1000, ARP, IPv4, ICMP, UDP, DHCP, DNS, TCP, HTTP.
-- **Formatos propios**: `.axe`, `.axl`, `.axh`, `.axb`, `.axmod`.
+- **Formatos propios**: `.axe`, `.axl`, `.axh`, `.axb`, `.axmod`, `.axsys`,
+  `.axc`.
+- **Configuracion**: ficheros `.ini` y `desktop.ini` para personalizar
+  carpetas y guardar ajustes, y `.axc` como manifiesto de aplicacion
+  (version, publicador y conexiones).
 
 ## Requisitos
 
@@ -86,6 +99,7 @@ build/
   apps/                        .elf, .axe y .axb
   modules/                     .axmod
   lib/                         libaxos.a y libaxos.axl
+  system/                      .axsys (archivos de sistema)
   tools/                       herramientas de host
 ```
 
@@ -318,4 +332,8 @@ Consulta `docs/sdk/README.md` para la documentacion completa del SDK.
 | 11 | [El compilador axc](manuales/11-compilador.md) | Compilador propio `axc` y flujo de trabajo |
 | 12 | [Depuracion](manuales/12-depuracion.md) | Herramientas y técnicas de debug |
 | 13 | [Servicios](manuales/13-servicios.md) | Gestor de servicios del sistema, registro y autostart |
+| 14 | [Sistema de paginacion](manuales/14-paginacion.md) | Memoria virtual, swap y paginacion de salida |
+| 15 | [Archivos .axsys](manuales/15-axsys.md) | Contenedores de sistema protegidos con firma |
+| 16 | [Ficheros INI](manuales/16-ini.md) | Configuracion INI y `desktop.ini` |
+| 17 | [Archivos .axc](manuales/17-axc.md) | Manifiesto de aplicacion: version, publicador y conexiones |
 ```

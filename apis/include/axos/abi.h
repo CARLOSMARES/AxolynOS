@@ -83,7 +83,33 @@ enum {
     AX_SYS_USER_PASSWD = 48, /* rdi=nombre rsi=actual rdx=nueva        */
     AX_SYS_USER_VERIFY = 49, /* rdi=nombre rsi=clave                  */
     AX_SYS_LOG         = 50, /* rdi=nivel rsi=texto                   */
-    AX_SYS_MAX         = 64
+
+    /* Paginacion por demanda y swap (51-54). */
+    AX_SYS_PAGEINFO    = 51, /* rdi=AxPagingInfo*                     */
+    AX_SYS_SWAP_OUT    = 52, /* rdi=direccion de user mode            */
+    AX_SYS_SWAP_ENABLE = 53, /* rdi=ruta (0 = por defecto)            */
+    AX_SYS_SWAP_DISABLE= 54, /* desactiva la evacuacion               */
+
+    /* Archivos de sistema .axsys (55-57). */
+    AX_SYS_SYSFILE_LIST = 55, /* rdi=indice rsi=AxSysFileInfo*        */
+    AX_SYS_SYSFILE_LOAD = 56, /* rdi=ruta -> indice | -errno           */
+    AX_SYS_SYSFILE_META = 57, /* rdi=indice rsi=clave rdx=buf r10=max  */
+
+    /* Ficheros INI (58-62). */
+    AX_SYS_INI_PARSE   = 58, /* rdi=ruta -> entradas | -errno         */
+    AX_SYS_INI_GET     = 59, /* rdi=seccion rsi=clave rdx=buf r10=max */
+    AX_SYS_INI_SET     = 60, /* rdi=seccion rsi=clave rdx=valor       */
+    AX_SYS_INI_ENUM    = 61, /* rdi=indice rsi=AxIniEntry*            */
+    AX_SYS_INI_SAVE    = 62, /* rdi=ruta                              */
+
+    /* Configuracion de aplicaciones .axc (63-67). */
+    AX_SYS_AXC_LIST     = 63, /* rdi=indice rsi=AxcInfo*               */
+    AX_SYS_AXC_LOAD     = 64, /* rdi=ruta -> indice | -errno          */
+    AX_SYS_AXC_CONN     = 65, /* rdi=indice rsi=conexion rdx=AxcConnection* */
+    AX_SYS_AXC_FIND     = 66, /* rdi=nombre -> indice | -ENOENT       */
+    AX_SYS_AXC_CONNECTION = 67, /* rdi=nombre rsi=tipo rdx=buf r10=max */
+
+    AX_SYS_MAX         = 96
 };
 
 /* Senales (coinciden con Kernel/include/ax_signal.h). */
@@ -251,6 +277,85 @@ typedef struct {
     ax_u32 flags;       /* bit 0 admin, bit 1 sesion actual */
     char   name[AX_NAME_LEN];
 } AxUserInfoABI;
+
+/* ------------------------------------------------------------------ */
+/* Paginacion por demanda y swap (syscalls 51-54)                      */
+/* ------------------------------------------------------------------ */
+typedef struct {
+    ax_u64 total_pages;     /* paginas de la region de user mode   */
+    ax_u64 mapped_pages;    /* presentes en RAM                     */
+    ax_u64 free_pages;      /* no mapeadas (demanda cero)           */
+    ax_u64 swapped_pages;   /* evacuadas al fichero de intercambio  */
+    ax_u64 page_faults;     /* fallos de pagina atendidos           */
+    ax_u64 swap_ins;        /* paginas recuperadas                  */
+    ax_u64 swap_outs;       /* paginas evacuadas                    */
+    ax_u64 swap_enabled;    /* 1 si se permite evacuar              */
+    ax_u64 swap_slots;      /* ranuras totales del fichero          */
+    ax_u64 swap_used;       /* ranuras ocupadas                     */
+    ax_u64 swap_bytes;      /* tamano del fichero de intercambio    */
+} AxPagingInfo;
+
+/* ------------------------------------------------------------------ */
+/* Archivos de sistema .axsys (syscalls 55-57)                         */
+/* ------------------------------------------------------------------ */
+#define AX_SYSFILE_NAME_LEN   32
+#define AX_SYSFILE_PRODUCT_LEN 32
+#define AX_SYSFILE_MANUF_LEN  32
+#define AX_SYSFILE_DESC_LEN   64
+
+typedef struct {
+    ax_u32 index;
+    ax_u32 flags;
+    ax_u32 content_type;
+    ax_u64 content_size;
+    ax_u64 content_crc32;
+    ax_u32 meta_count;
+    ax_u32 signature_ok;
+    char   name[AX_SYSFILE_NAME_LEN];
+    char   product[AX_SYSFILE_PRODUCT_LEN];
+    char   manufacturer[AX_SYSFILE_MANUF_LEN];
+    char   description[AX_SYSFILE_DESC_LEN];
+} AxSysFileInfo;
+
+/* ------------------------------------------------------------------ */
+/* Ficheros INI (syscalls 58-62)                                       */
+/* ------------------------------------------------------------------ */
+#define AX_INI_KEY_LEN    32
+#define AX_INI_VALUE_LEN  128
+
+typedef struct {
+    char   section[AX_INI_KEY_LEN];
+    char   key[AX_INI_KEY_LEN];
+    char   value[AX_INI_VALUE_LEN];
+} AxIniEntry;
+
+/* ------------------------------------------------------------------ */
+/* Configuracion de aplicaciones .axc (syscalls 63-67)                 */
+/* ------------------------------------------------------------------ */
+#define AX_AXC_NAME_LEN     32
+#define AX_AXC_VER_LEN      16
+#define AX_AXC_PUB_LEN      48
+#define AX_AXC_EXEC_LEN     128
+#define AX_AXC_ICON_LEN     128
+#define AX_AXC_DESC_LEN     64
+#define AX_AXC_KEY_LEN      16
+#define AX_AXC_CONN_LEN     64
+
+typedef struct {
+    char   name[AX_AXC_NAME_LEN];
+    char   version[AX_AXC_VER_LEN];
+    char   publisher[AX_AXC_PUB_LEN];
+    char   exec[AX_AXC_EXEC_LEN];
+    char   icon[AX_AXC_ICON_LEN];
+    char   description[AX_AXC_DESC_LEN];
+    ax_u32 conn_count;
+    ax_u32 reserved;
+} AxcInfo;
+
+typedef struct {
+    char   key[AX_AXC_KEY_LEN];
+    char   value[AX_AXC_CONN_LEN];
+} AxcConnection;
 
 #ifdef __cplusplus
 }

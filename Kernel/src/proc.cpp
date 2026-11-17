@@ -32,6 +32,7 @@
 #include "ax_console.h"
 #include "ax_gc.h"
 #include "ax_signal.h"
+#include "ax_paging.h"
 
 /* ------------------------------------------------------------------ */
 /* Ranuras de user mode                                                */
@@ -136,6 +137,10 @@ static void ax_slot_release(int index)
     if (index < 0 || index >= (int)AX_USER_MAX_SLOTS) {
         return;
     }
+    /* Desmapea las paginas de la ranura y recupera las ranuras de swap: la
+       siguiente aplicacion que ocupe esta ranura parte de memoria limpia. */
+    ax_paging_free_slot((uint32_t)index);
+
     g_slots[index].used = false;
     g_slots[index].pid = 0;
     g_slots[index].entry = 0;
@@ -192,6 +197,12 @@ static uint64_t ax_proc_setup_stack(uint64_t stack_top, const char* path,
     uint64_t rsp = strings_base - block;
 
     if (rsp < AX_USER_VIRT_BASE) {
+        return 0;
+    }
+
+    /* La pila de user mode se mapea por demanda: hay que preparar las
+       paginas antes de escribir los argumentos. */
+    if (ax_paging_touch(rsp, stack_top - rsp) != 0) {
         return 0;
     }
 
@@ -283,6 +294,11 @@ int ax_proc_spawn(const char* path, const char* const* argv, int argc)
     if (slot < 0) {
         return AX_ENOSPC;
     }
+
+    /* La ranura parte de memoria limpia: se desmapean las paginas que
+       pudiera haber mapeadas y se marcan como libres para que el cargador
+       las prepare por demanda. */
+    ax_paging_free_slot((uint32_t)slot);
 
     uint64_t entry = 0;
     int rc = ax_elf_load_user(payload, payload_size, g_slots[slot].base, &entry);

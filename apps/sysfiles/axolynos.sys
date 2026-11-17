@@ -1,0 +1,12 @@
+AxolynOS - archivo de sistema de ejemplo
+========================================
+
+Este contenido esta protegido dentro de un contenedor .axsys.
+Solo el kernel puede leerlo; las aplicaciones ven los metadatos
+y la firma, pero nunca los bytes.
+
+Nombre      : axolynos
+Producto    : AxolynOS Kernel Data
+Fabricante  : AxolynOS Project
+Version     : 1.0
+Tipo        : datos de sistema

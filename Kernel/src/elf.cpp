@@ -22,6 +22,7 @@
 #include "ax_elf.h"
 #include "ax_console.h"
 #include "ax_memory.h"
+#include "ax_paging.h"
 
 /* ------------------------------------------------------------------ */
 /* Utilidades                                                          */
@@ -164,9 +165,9 @@ int ax_elf_load_user(const void* image, uint64_t size, uint64_t vaddr_base,
             dest + ph->p_memsz > AX_USER_REGION_END) {
             return AX_ERANGE;
         }
-        /* Y la pagina tiene que estar mapeada (el mapa de identidad cubre
-           la region de user mode si hay suficiente RAM). */
-        if (ax_vmm_translate(dest) == 0) {
+        /* Las paginas de user mode se mapean por demanda: hay que preparar
+           el rango antes de copiar el segmento. */
+        if (ax_paging_touch(dest, ph->p_memsz) != 0) {
             return AX_ENOMEM;
         }
 
@@ -258,6 +259,9 @@ int ax_elf_load_user(const void* image, uint64_t size, uint64_t vaddr_base,
                 uint64_t where = base + rela->r_offset;
                 if (where < AX_USER_VIRT_BASE || where + 8 > AX_USER_REGION_END) {
                     return AX_ERANGE;
+                }
+                if (ax_paging_touch(where, 8) != 0) {
+                    return AX_ENOMEM;
                 }
                 uint64_t* slot = (uint64_t*)(uintptr_t)where;
                 *slot = base + (uint64_t)rela->r_addend;

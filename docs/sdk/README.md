@@ -177,6 +177,67 @@ if (ret >= 0) {
 }
 ```
 
+### Paginacion por demanda y swap
+
+```c
+#include <axos/axos.hpp>
+
+axos::PagingInfo p = axos::paging_info();
+axos::print("paginas mapeadas: ");
+axos::println_uint(p.mapped_pages);
+
+axos::swap_enable();              /* /system/pagefile.axswap */
+axos::swap_out(0x40000000);       /* evacua una pagina */
+axos::swap_disable();
+```
+
+### Archivos de sistema .axsys
+
+```c
+#include <axos/axos.hpp>
+
+for (unsigned int i = 0; i < 16; ++i) {
+    axos::SysFileInfo info = axos::sysfile_list(i);
+    if (info.error < 0) break;
+    axos::print(info.name);
+    axos::print(" de ");
+    axos::println(info.manufacturer);
+}
+```
+
+### Ficheros INI y desktop.ini
+
+```c
+#include <axos/axos.hpp>
+
+axos::ini_parse("/system/ejemplo.ini");
+char value[AX_INI_VALUE_LEN];
+axos::ini_get("general", "nombre", value, sizeof(value));
+axos::ini_set("general", "tema", "claro");
+axos::ini_save("/system/ejemplo.ini");
+```
+
+### Configuracion de aplicaciones .axc
+
+```c
+#include <axos/axos.hpp>
+
+axos::AppConfig c = axos::axc_list(1);
+axos::print(c.name);
+axos::print(" v");
+axos::println(c.version);
+
+for (unsigned int i = 0; i < c.conn_count; ++i) {
+    axos::AppConnection cn = axos::axc_conn(1, i);
+    axos::print("  ");
+    axos::print(cn.key);
+    axos::print(" -> ");
+    axos::println(cn.value);
+}
+
+axos::axc_load("/config/miapp.axc");
+```
+
 ### Servicios del sistema
 
 ```c
@@ -282,6 +343,32 @@ Para una experiencia similar a VSCode con autocompletado, se recomienda:
 - `ax_module_init()`, `ax_module_autoload()`
 - `ax_module_load(name)`, `ax_module_unload(index)`
 - `ax_module_fill_info(AxModInfo*, max)`
+
+### Desde `axos/paging.h` (paginacion):
+
+- `ax_paging_info(AxPagingInfo*)`, `ax_paging_swap_out(addr)`
+- `ax_paging_swap_enable(path)`, `ax_paging_swap_disable()`
+- En C++: `axos::paging_info()`, `axos::swap_out()`, `axos::swap_enable()`
+
+### Desde `axos/sysfile.h` (archivos .axsys):
+
+- `ax_sysfile_list(index, out)`, `ax_sysfile_load(path)`
+- `ax_sysfile_meta(index, key, out, max)`
+- En C++: `axos::sysfile_list()`, `axos::sysfile_load()`, `axos::sysfile_meta()`
+
+### Desde `axos/ini.h` (ficheros INI):
+
+- `ax_ini_parse(path)`, `ax_ini_get(section, key, out, max)`
+- `ax_ini_set(section, key, value)`, `ax_ini_enum(index, out)`, `ax_ini_save(path)`
+- En C++: `axos::ini_parse()`, `axos::ini_get()`, `axos::ini_set()`,
+  `axos::ini_enum()`, `axos::ini_save()`
+
+### Desde `axos/axc.h` (configuracion de aplicaciones):
+
+- `ax_axc_list(index, out)`, `ax_axc_load(path)`, `ax_axc_conn(index, i, out)`
+- `ax_axc_find(name)`, `ax_axc_connection(name, key, out, max)`
+- En C++: `axos::axc_list()`, `axos::axc_load()`, `axos::axc_conn()`,
+  `axos::axc_find()`, `axos::axc_connection()`
 
 ---
 

@@ -40,6 +40,7 @@
 #include "ax_signal.h"
 #include "ax_splash.h"
 #include "ax_service.h"
+#include "ax_paging.h"
 
 /* ------------------------------------------------------------------ */
 /* Pilas propias del kernel                                             */
@@ -245,6 +246,10 @@ void ax_kernel_init(AxBootInfo* info)
     ax_printf("[mem] VMM: PML4 en %p, %llu MiB mapeados en identidad\n",
               (void*)(uintptr_t)ax_vmm_pml4_phys(),
               (unsigned long long)(ax_vmm_low_mapped_bytes() / (1024ull * 1024ull)));
+
+    /* Paginacion por demanda: las paginas de user mode se mapean al tocarlas
+       y se pueden evacuar al fichero de intercambio (ver paging.cpp). */
+    ax_paging_init();
 
     /* --- Heap del kernel -------------------------------------------- */
     ax_heap_init();

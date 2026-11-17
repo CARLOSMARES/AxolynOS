@@ -16,6 +16,7 @@
 #include "ax_console.h"
 #include "ax_syscall_entry.h"
 #include "ax_keyboard.h"
+#include "ax_paging.h"
 
 /* ------------------------------------------------------------------ */
 /* ------------------------------------------------------------------ */
@@ -116,6 +117,16 @@ void ax_isr_handler(ax_interrupt_frame* frame)
     if (vector >= AX_IRQ_BASE && vector < AX_IRQ_BASE + 16) {
         ax_irq_handler(frame);
         return;
+    }
+
+    /* --- Fallo de pagina: la paginacion por demanda lo puede resolver --- */
+    if (vector == AX_EXC_PGFAULT) {
+        uint64_t cr2 = ax_read_cr2();
+        if (ax_paging_on_fault(cr2, frame->error)) {
+            /* La pagina queda mapeada: se reintentara la instruccion que
+               provoco el fallo. */
+            return;
+        }
     }
 
     /* --- Excepcion de la CPU --------------------------------------- */

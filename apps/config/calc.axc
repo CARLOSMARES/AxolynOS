@@ -1,0 +1,13 @@
+# Configuracion de la aplicacion calc
+[app]
+name        = calc
+version     = 1.2.0
+publisher   = AxolynOS Project
+exec        = /apps/calc.axe
+icon        = /system/icons/calc.ico
+description = Calculadora de la shell
+
+[connections]
+run         = editor
+open        = desktop.ini
+depends     = libaxos

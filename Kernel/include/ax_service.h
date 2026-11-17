@@ -14,7 +14,7 @@
 extern "C" {
 #endif
 
-#define AX_SERVICE_MAX      24
+#define AX_SERVICE_MAX      32
 #define AX_SERVICE_NAME     32
 #define AX_SERVICE_DESC     80
 
